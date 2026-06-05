@@ -669,7 +669,7 @@ export function DashboardDM() {
         className={`dashboard-container ${modoOscuro ? 'dark-dashboard' : ''}`}
       >
         <div className="dashboard-header">
-          <h1>Dashboard SMART</h1>
+          <h1>Dashboard Ejecutivo SOL - Dispositivos Médicos</h1>
           <p className="dashboard-subtitle">
             {error || 'No hay datos disponibles'}
           </p>
@@ -707,7 +707,7 @@ export function DashboardDM() {
           </div>
           <div className="dashboard-title-block">
             <span className="dashboard-kicker">Agencia de Regulación Sanitaria</span>
-            <h1>Dashboard SMART</h1>
+            <h1>Dashboard Ejecutivo SOL - Dispositivos Médicos</h1>
             <p className="dashboard-subtitle">
               Seguimiento de productividad, tiempos de gestión y casos que requieren
               atención
