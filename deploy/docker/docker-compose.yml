@@ -1,0 +1,18 @@
+version: '3.8'
+services:
+  db:
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: "${SA_PASSWORD:?Set SA_PASSWORD in deploy/docker/.env}"
+    ports:
+      - "1433:1433"
+  api:
+    build: ../../backend/dotnet-api
+    depends_on: [db]
+    ports:
+      - "5000:80"
+  frontend:
+    build: ../../frontend/web-admin
+    ports:
+      - "3000:3000"
