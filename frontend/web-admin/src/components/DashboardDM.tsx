@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, type MouseEvent, useEffect, useMemo, useState } from 'react';
 import { max, scaleBand, scaleLinear } from 'd3';
 import {
   Bar,
@@ -75,6 +75,17 @@ type SeccionDashboard =
   | 'legal-vivo'
   | 'kpi-tecnico'
   | 'kpi-legal';
+type ContextAction = {
+  label: string;
+  description?: string;
+  action: () => void;
+};
+type ContextMenuState = {
+  x: number;
+  y: number;
+  title: string;
+  actions: ContextAction[];
+} | null;
 
 const SERIES_PLAZOS_RESOLUCION = [
   { key: 'p3', label: '3 días', plazo: 3, color: '#1e40af', className: 'segment-plazo-3' },
@@ -988,15 +999,91 @@ function MetricCard({
   valor,
   etiqueta,
   variante,
+  acciones,
+  onOpenActions,
+  onContextMenuAction,
 }: {
   valor: number;
   etiqueta: string;
   variante?: 'warning' | 'alert' | 'success' | 'info';
+  acciones?: ContextAction[];
+  onOpenActions?: (event: MouseEvent<HTMLButtonElement>) => void;
+  onContextMenuAction?: (event: MouseEvent<HTMLDivElement>) => void;
 }) {
+  const esAccionable = Boolean(acciones?.length && onOpenActions);
+
   return (
-    <div className={`metric-card ${variante ? `metric-${variante}` : ''}`}>
+    <div
+      className={`metric-card ${variante ? `metric-${variante}` : ''} ${
+        esAccionable ? 'metric-card-actionable' : ''
+      }`}
+      onContextMenu={onContextMenuAction}
+    >
+      {esAccionable && (
+        <button
+          className="context-trigger-button"
+          type="button"
+          onClick={onOpenActions}
+          aria-label={`Acciones de ${etiqueta}`}
+        >
+          ⋮
+        </button>
+      )}
       <div className="metric-value">{valor}</div>
       <div className="metric-label">{etiqueta}</div>
+    </div>
+  );
+}
+
+function ContextActionMenu({
+  menu,
+  onClose,
+}: {
+  menu: ContextMenuState;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    if (!menu) return;
+
+    const cerrarConEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    const cerrarConClick = () => onClose();
+
+    window.addEventListener('keydown', cerrarConEscape);
+    window.addEventListener('click', cerrarConClick);
+
+    return () => {
+      window.removeEventListener('keydown', cerrarConEscape);
+      window.removeEventListener('click', cerrarConClick);
+    };
+  }, [menu, onClose]);
+
+  if (!menu) return null;
+
+  return (
+    <div
+      className="context-action-menu"
+      style={{ left: menu.x, top: menu.y }}
+      onClick={(event) => event.stopPropagation()}
+      role="menu"
+      aria-label={`Acciones: ${menu.title}`}
+    >
+      <div className="context-action-menu-header">{menu.title}</div>
+      {menu.actions.map((item) => (
+        <button
+          key={item.label}
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            item.action();
+            onClose();
+          }}
+        >
+          <span>{item.label}</span>
+          {item.description && <small>{item.description}</small>}
+        </button>
+      ))}
     </div>
   );
 }
@@ -2147,6 +2234,7 @@ function DashboardTecnico({
   const [tramiteReasignacion, setTramiteReasignacion] =
     useState<TramiteNormalizado | null>(null);
   const [modalMasivoAbierto, setModalMasivoAbierto] = useState(false);
+  const [menuContextual, setMenuContextual] = useState<ContextMenuState>(null);
   const tramitesTecnicosBase = useMemo(
     () =>
       tramites.filter(
@@ -2285,6 +2373,142 @@ function DashboardTecnico({
     () => calcularControlTecnico(tramites, tramitesTecnicosBase, pasadosLegal),
     [pasadosLegal, tramites, tramitesTecnicosBase]
   ); 
+  const abrirMenuContextual = (
+    event: MouseEvent<HTMLElement>,
+    title: string,
+    actions: ContextAction[]
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setMenuContextual({
+      x: Math.min(event.clientX, window.innerWidth - 280),
+      y: Math.min(event.clientY, window.innerHeight - 240),
+      title,
+      actions,
+    });
+  };
+  const filtrarPorCondicionAccion = (
+    lista: TramiteNormalizado[],
+    condicion: FiltroCondicionTecnica
+  ) =>
+    lista.filter((tramite) => {
+      if (condicion === 'vencido') return tramite.estado === 'vencido';
+      if (condicion === 'por_vencer') return tramite.estado === 'por_vencer';
+      if (condicion === 'no_definido') return tramite.plazoDias === undefined;
+      if (condicion === 'en_tiempo') {
+        return (
+          tramite.plazoDias !== undefined &&
+          tramite.estado !== 'vencido' &&
+          tramite.estado !== 'por_vencer'
+        );
+      }
+      return true;
+    });
+  const elegirTecnicoConMasCarga = (lista: TramiteNormalizado[]) => {
+    const conteo = new Map<string, number>();
+    lista.forEach((tramite) => {
+      if (!tramite.colaboradorTecnico) return;
+      conteo.set(
+        tramite.colaboradorTecnico,
+        (conteo.get(tramite.colaboradorTecnico) ?? 0) + 1
+      );
+    });
+    return Array.from(conteo.entries()).sort((a, b) => b[1] - a[1])[0]?.[0];
+  };
+  const aplicarAccionRedistribucion = ({
+    condicion = 'todos',
+    tecnico,
+    seleccionar = false,
+    soloCriticos = false,
+  }: {
+    condicion?: FiltroCondicionTecnica;
+    tecnico?: string;
+    seleccionar?: boolean;
+    soloCriticos?: boolean;
+  }) => {
+    const candidatosBase = filtrarPorCondicionAccion(
+      tramitesTecnicosBase,
+      soloCriticos ? 'vencido' : condicion
+    );
+    const tecnicoDestino = tecnico ?? elegirTecnicoConMasCarga(candidatosBase);
+
+    setFiltroFase('tecnica');
+    setFiltroCondicion(condicion);
+    setFiltroDiasResolucion('todos');
+    setTecnicoSeleccionado(tecnicoDestino ?? 'todos');
+
+    if (seleccionar && tecnicoDestino) {
+      const ids = filtrarPorCondicionAccion(
+        tramitesTecnicosBase.filter(
+          (tramite) => tramite.colaboradorTecnico === tecnicoDestino
+        ),
+        soloCriticos ? 'vencido' : condicion
+      ).map((tramite) => tramite.id);
+
+      window.setTimeout(() => setTramitesSeleccionadosIds(ids), 0);
+    } else {
+      setTramitesSeleccionadosIds([]);
+    }
+  };
+  const crearAccionesTecnicas = ({
+    condicion = 'todos',
+    tecnico,
+    incluirCriticos = true,
+  }: {
+    condicion?: FiltroCondicionTecnica;
+    tecnico?: string;
+    incluirCriticos?: boolean;
+  }): ContextAction[] => [
+    {
+      label: 'Ver detalle',
+      description: 'Muestra el detalle filtrado para revisar carga.',
+      action: () => aplicarAccionRedistribucion({ condicion, tecnico }),
+    },
+    {
+      label: 'Redistribuir carga',
+      description: 'Prepara seleccion multiple sin ejecutar SOL real.',
+      action: () =>
+        aplicarAccionRedistribucion({ condicion, tecnico, seleccionar: true }),
+    },
+    ...(incluirCriticos
+      ? [
+          {
+            label: 'Seleccionar tramites criticos',
+            description: 'Preselecciona vencidos del contexto.',
+            action: () =>
+              aplicarAccionRedistribucion({
+                condicion: 'vencido',
+                tecnico,
+                seleccionar: true,
+                soloCriticos: true,
+              }),
+          },
+        ]
+      : []),
+    {
+      label: 'Ver tramites vencidos',
+      description: 'Filtra vencidos para este contexto.',
+      action: () =>
+        aplicarAccionRedistribucion({ condicion: 'vencido', tecnico }),
+    },
+    {
+      label: 'Ver tramites proximos a vencer',
+      description: 'Filtra proximos para este contexto.',
+      action: () =>
+        aplicarAccionRedistribucion({ condicion: 'por_vencer', tecnico }),
+    },
+    {
+      label: 'Limpiar filtro',
+      description: 'Vuelve a la vista tecnica general.',
+      action: () => {
+        setTecnicoSeleccionado('todos');
+        setFiltroCondicion('todos');
+        setFiltroDiasResolucion('todos');
+        setFiltroFase('todos');
+        setTramitesSeleccionadosIds([]);
+      },
+    },
+  ];
 
   return (
     <div className="section technical-dashboard">
@@ -2431,6 +2655,8 @@ function DashboardTecnico({
         resumen={resumen}
         totalPasadosLegal={pasadosLegalVista.length}
         tecnicosActivos={tecnicosActivos}
+        crearAcciones={(condicion) => crearAccionesTecnicas({ condicion })}
+        abrirMenu={abrirMenuContextual}
       />
 
       <div className="view-switcher" aria-label="Selector de vista de carga activa">
@@ -2456,10 +2682,22 @@ function DashboardTecnico({
         {vistaCargaActiva === 'dia' ? (
           <CargaActivaPorDiaResolucion matriz={matriz} />
         ) : (
-          <GraficoCargaActivaTecnico matriz={matriz} />
+          <GraficoCargaActivaTecnico
+            matriz={matriz}
+            abrirMenu={abrirMenuContextual}
+            crearAcciones={(tecnico) =>
+              crearAccionesTecnicas({ tecnico, condicion: 'todos' })
+            }
+          />
         )}
         <GraficoDistribucionPlazos tramites={tramitesVista} />
-        <GraficoVencidosProximos matriz={matriz} />
+        <GraficoVencidosProximos
+          matriz={matriz}
+          abrirMenu={abrirMenuContextual}
+          crearAcciones={(tecnico) =>
+            crearAccionesTecnicas({ tecnico, condicion: 'vencido' })
+          }
+        />
         <GraficoPasadosLegal rows={pasadosLegalAgrupados} />
       </div>
 
@@ -2473,6 +2711,10 @@ function DashboardTecnico({
         matriz={matriz}
         tecnicoSeleccionado={tecnicoSeleccionado}
         onSeleccionarTecnico={setTecnicoSeleccionado}
+        abrirMenu={abrirMenuContextual}
+        crearAcciones={(tecnico) =>
+          crearAccionesTecnicas({ tecnico, condicion: 'todos' })
+        }
       />
 
       {tecnicoSeleccionado !== 'todos' && (
@@ -2575,6 +2817,11 @@ function DashboardTecnico({
           }}
         />
       )}
+
+      <ContextActionMenu
+        menu={menuContextual}
+        onClose={() => setMenuContextual(null)}
+      />
     </div>
   );
 }
@@ -2637,22 +2884,76 @@ function TablaCargaTecnicos({ carga }: { carga: CargaColaborador[] }) {
   );
 }
 
-function ResumenTecnico({ resumen, totalPasadosLegal, tecnicosActivos }: { resumen: ReturnType<typeof calcularResumenTramitesTecnicos>; totalPasadosLegal?: number; tecnicosActivos?: number; }) {
+function ResumenTecnico({
+  resumen,
+  totalPasadosLegal,
+  tecnicosActivos,
+  crearAcciones,
+  abrirMenu,
+}: {
+  resumen: ReturnType<typeof calcularResumenTramitesTecnicos>;
+  totalPasadosLegal?: number;
+  tecnicosActivos?: number;
+  crearAcciones?: (condicion: FiltroCondicionTecnica) => ContextAction[];
+  abrirMenu?: (
+    event: MouseEvent<HTMLElement>,
+    title: string,
+    actions: ContextAction[]
+  ) => void;
+}) {
+  const propsAccionables = (
+    etiqueta: string,
+    condicion: FiltroCondicionTecnica
+  ) => {
+    const acciones = crearAcciones?.(condicion) ?? [];
+    if (!abrirMenu || acciones.length === 0) return {};
+    return {
+      acciones,
+      onOpenActions: (event: MouseEvent<HTMLButtonElement>) =>
+        abrirMenu(event, etiqueta, acciones),
+      onContextMenuAction: (event: MouseEvent<HTMLDivElement>) =>
+        abrirMenu(event, etiqueta, acciones),
+    };
+  };
+
   return (
     <div className="summary-grid">
       {tecnicosActivos !== undefined && (
-        <MetricCard valor={tecnicosActivos} etiqueta="Tecnicos activos" />
+        <MetricCard
+          valor={tecnicosActivos}
+          etiqueta="Tecnicos activos"
+          {...propsAccionables('Tecnicos activos', 'todos')}
+        />
       )}
-      <MetricCard valor={resumen.total} etiqueta="Trámites activos en fase técnica" />
+      <MetricCard
+        valor={resumen.total}
+        etiqueta="Trámites activos en fase técnica"
+        {...propsAccionables('Tramites activos', 'todos')}
+      />
       {totalPasadosLegal !== undefined && (
         <MetricCard valor={totalPasadosLegal} etiqueta="Pasados a legal" variante="success" />
       )}
       <MetricCard valor={resumen.plazo5} etiqueta="5 dias" />
       <MetricCard valor={resumen.plazo10} etiqueta="10 dias" />
       <MetricCard valor={resumen.plazo15} etiqueta="15 dias" />
-      <MetricCard valor={resumen.plazoNoDefinido} etiqueta="Sin plazo" variante="info" />
-      <MetricCard valor={resumen.vencidos} etiqueta="Vencidos" variante="warning" />
-      <MetricCard valor={resumen.proximos} etiqueta="Próximos" variante="alert" />
+      <MetricCard
+        valor={resumen.plazoNoDefinido}
+        etiqueta="Sin plazo"
+        variante="info"
+        {...propsAccionables('Sin plazo', 'no_definido')}
+      />
+      <MetricCard
+        valor={resumen.vencidos}
+        etiqueta="Vencidos"
+        variante="warning"
+        {...propsAccionables('Vencidos', 'vencido')}
+      />
+      <MetricCard
+        valor={resumen.proximos}
+        etiqueta="Próximos"
+        variante="alert"
+        {...propsAccionables('Proximos a vencer', 'por_vencer')}
+      />
     </div>
   );
 }
@@ -2940,7 +3241,7 @@ function MetricDonutChart({
   return (
     <div className="metric-donut-layout">
       <div className="metric-donut-chart">
-        <ResponsiveContainer width="100%" height={260}>
+        <ResponsiveContainer width="100%" height={220}>
           <PieChart>
             <Pie
               data={chartData}
@@ -3070,8 +3371,16 @@ function CargaActivaPorDiaResolucion({
 
 function GraficoCargaActivaTecnico({
   matriz,
+  abrirMenu,
+  crearAcciones,
 }: {
   matriz: ReturnType<typeof construirMatrizTecnicos>;
+  abrirMenu?: (
+    event: MouseEvent<HTMLElement>,
+    title: string,
+    actions: ContextAction[]
+  ) => void;
+  crearAcciones?: (tecnico: string) => ContextAction[];
 }) {
   const rows = matriz
     .filter((row) => row.total > 0)
@@ -3113,6 +3422,29 @@ function GraficoCargaActivaTecnico({
         </div>
       </div>
       <MetricBarChart data={chartData} height={Math.max(280, rows.length * 38 + 72)} />
+      {abrirMenu && crearAcciones && (
+        <div className="chart-context-strip" aria-label="Accesos de redistribucion por tecnico">
+          {rows.slice(0, 8).map((row) => {
+            const acciones = crearAcciones(row.tecnico);
+            return (
+              <button
+                key={`chart-action-${row.tecnico}`}
+                type="button"
+                onClick={(event) =>
+                  abrirMenu(event, obtenerCodigoTecnico(row.tecnico), acciones)
+                }
+                onContextMenu={(event) =>
+                  abrirMenu(event, obtenerCodigoTecnico(row.tecnico), acciones)
+                }
+                title={row.tecnico}
+              >
+                <span>{obtenerCodigoTecnico(row.tecnico)}</span>
+                <strong>{row.total}</strong>
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div className="legacy-chart-hidden">
         {rows.map((row) => (
           <div className="stacked-row" key={row.tecnico}>
@@ -3261,8 +3593,16 @@ function GraficoDistribucionPlazos({
 
 function GraficoVencidosProximos({
   matriz,
+  abrirMenu,
+  crearAcciones,
 }: {
   matriz: ReturnType<typeof construirMatrizTecnicos>;
+  abrirMenu?: (
+    event: MouseEvent<HTMLElement>,
+    title: string,
+    actions: ContextAction[]
+  ) => void;
+  crearAcciones?: (tecnico: string) => ContextAction[];
 }) {
   const rows = matriz
     .filter((row) => row.vencidos > 0 || row.proximos > 0)
@@ -3286,8 +3626,15 @@ function GraficoVencidosProximos({
         <div className="grouped-bars">
           {rows.map((row) => {
             const max = Math.max(...rows.map((item) => item.vencidos + item.proximos), 1);
+            const acciones = crearAcciones?.(row.tecnico) ?? [];
             return (
-              <div className="grouped-row" key={row.tecnico}>
+              <div
+                className="grouped-row grouped-row-actionable"
+                key={row.tecnico}
+                onContextMenu={(event) =>
+                  abrirMenu?.(event, obtenerCodigoTecnico(row.tecnico), acciones)
+                }
+              >
                 <span title={row.tecnico}>{obtenerCodigoTecnico(row.tecnico)}</span>
                 <div className="grouped-track">
                   <i
@@ -3302,6 +3649,18 @@ function GraficoVencidosProximos({
                   />
                 </div>
                 <strong>{row.vencidos + row.proximos}</strong>
+                {abrirMenu && acciones.length > 0 && (
+                  <button
+                    className="inline-context-button"
+                    type="button"
+                    onClick={(event) =>
+                      abrirMenu(event, obtenerCodigoTecnico(row.tecnico), acciones)
+                    }
+                    aria-label={`Acciones de ${obtenerCodigoTecnico(row.tecnico)}`}
+                  >
+                    ⋮
+                  </button>
+                )}
               </div>
             );
           })}
@@ -3407,10 +3766,18 @@ function TablaMatrizTecnicos({
   matriz,
   tecnicoSeleccionado,
   onSeleccionarTecnico,
+  abrirMenu,
+  crearAcciones,
 }: {
   matriz: ReturnType<typeof construirMatrizTecnicos>;
   tecnicoSeleccionado: string;
   onSeleccionarTecnico: (tecnico: string) => void;
+  abrirMenu?: (
+    event: MouseEvent<HTMLElement>,
+    title: string,
+    actions: ContextAction[]
+  ) => void;
+  crearAcciones?: (tecnico: string) => ContextAction[];
 }) {
   if (matriz.length === 0) {
     return <p className="empty-state">No hay técnicos con trámites asignados</p>;
@@ -3453,17 +3820,23 @@ function TablaMatrizTecnicos({
             <th>% carga</th>
             <th>Pasados a legal</th>
             <th>Carga ponderada</th>
+            {abrirMenu && <th>Acciones</th>}
           </tr>
         </thead>
         <tbody>
-          {matriz.map((row) => (
-            <tr
-              key={row.tecnico}
-              className={`matrix-row-clickable ${
-                row.tecnico === tecnicoSeleccionado ? 'row-selected' : ''
-              }`}
-              onClick={() => onSeleccionarTecnico(row.tecnico)}
-            >
+          {matriz.map((row) => {
+            const acciones = crearAcciones?.(row.tecnico) ?? [];
+            return (
+              <tr
+                key={row.tecnico}
+                className={`matrix-row-clickable ${
+                  row.tecnico === tecnicoSeleccionado ? 'row-selected' : ''
+                }`}
+                onClick={() => onSeleccionarTecnico(row.tecnico)}
+                onContextMenu={(event) =>
+                  abrirMenu?.(event, obtenerCodigoTecnico(row.tecnico), acciones)
+                }
+              >
               <td className="cell-id" title={row.tecnico}>
                 {obtenerCodigoTecnico(row.tecnico)}
               </td>
@@ -3495,8 +3868,24 @@ function TablaMatrizTecnicos({
                   <span>{row.cargaPonderada}</span>
                 </div>
               </td>
+              {abrirMenu && (
+                <td>
+                  <button
+                    className="inline-context-button"
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      abrirMenu(event, obtenerCodigoTecnico(row.tecnico), acciones);
+                    }}
+                    aria-label={`Acciones de ${obtenerCodigoTecnico(row.tecnico)}`}
+                  >
+                    ⋮
+                  </button>
+                </td>
+              )}
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>
