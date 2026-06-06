@@ -16,6 +16,10 @@ import {
 import { fetchTramitesDM } from '../services/solApi';
 import { calcularMetricasDashboard } from '../services/metricas';
 import {
+  reasignarTramite,
+  reasignarTramitesMasivo,
+} from '../services/reasignacionService';
+import {
   aplicarFiltroFecha,
   crearFiltroInicial,
   crearFiltroPersonalizado,
@@ -2137,6 +2141,12 @@ function DashboardTecnico({
   const [vistaCargaActiva, setVistaCargaActiva] = useState<'dia' | 'tecnico'>(
     'dia'
   );
+  const [tramitesSeleccionadosIds, setTramitesSeleccionadosIds] = useState<string[]>(
+    []
+  );
+  const [tramiteReasignacion, setTramiteReasignacion] =
+    useState<TramiteNormalizado | null>(null);
+  const [modalMasivoAbierto, setModalMasivoAbierto] = useState(false);
   const tramitesTecnicosBase = useMemo(
     () =>
       tramites.filter(
@@ -2233,6 +2243,34 @@ function DashboardTecnico({
     filtroFase === 'pasado_legal' ? [] : tramitesTecnicosFiltrados;
   const pasadosLegalVista =
     filtroFase === 'tecnica' ? [] : pasadosLegalFiltrados;
+  const idsVisibles = useMemo(
+    () => new Set(tramitesVista.map((tramite) => tramite.id)),
+    [tramitesVista]
+  );
+  useEffect(() => {
+    setTramitesSeleccionadosIds((ids) =>
+      ids.filter((id) => idsVisibles.has(id))
+    );
+  }, [idsVisibles]);
+  const tramitesSeleccionados = useMemo(
+    () =>
+      tramitesVista.filter((tramite) =>
+        tramitesSeleccionadosIds.includes(tramite.id)
+      ),
+    [tramitesSeleccionadosIds, tramitesVista]
+  );
+  const cargaPorResponsable = useMemo(() => {
+    const carga = new Map<string, number>();
+    tramitesTecnicosBase.forEach((tramite) => {
+      if (!tramite.colaboradorTecnico) return;
+      carga.set(
+        tramite.colaboradorTecnico,
+        (carga.get(tramite.colaboradorTecnico) ?? 0) + 1
+      );
+    });
+    return carga;
+  }, [tramitesTecnicosBase]);
+  const responsablesDisponibles = tecnicos;
   const pasadosLegalAgrupados = useMemo(
     () => construirPasadosLegal(pasadosLegalVista, 'todos'),
     [pasadosLegalVista]
@@ -2459,7 +2497,52 @@ function DashboardTecnico({
           />
           <details open>
             <summary>Trámites activos en fase técnica ({tramitesVista.length})</summary>
-            <TablaTramitesTecnico tramites={tramitesVista} />
+            <div className="redistribution-toolbar">
+              <div>
+                <span className="redistribution-kicker">Redistribucion de carga</span>
+                <p>
+                  Selecciona tramites visibles para preparar una reasignacion
+                  individual o masiva.
+                </p>
+              </div>
+              <div className="redistribution-actions">
+                {tramitesSeleccionados.length > 0 && (
+                  <button
+                    className="btn btn-outline btn-sm"
+                    onClick={() => setTramitesSeleccionadosIds([])}
+                  >
+                    Limpiar seleccion
+                  </button>
+                )}
+                <button
+                  className="btn btn-primary btn-sm"
+                  disabled={tramitesSeleccionados.length === 0}
+                  onClick={() => setModalMasivoAbierto(true)}
+                >
+                  Reasignar {tramitesSeleccionados.length || ''} seleccionados
+                </button>
+              </div>
+            </div>
+            <TablaTramitesTecnico
+              tramites={tramitesVista}
+              tramitesSeleccionadosIds={tramitesSeleccionadosIds}
+              onToggleTramite={(id) =>
+                setTramitesSeleccionadosIds((ids) =>
+                  ids.includes(id)
+                    ? ids.filter((item) => item !== id)
+                    : [...ids, id]
+                )
+              }
+              onToggleTodos={(ids, seleccionar) =>
+                setTramitesSeleccionadosIds((seleccionados) => {
+                  if (seleccionar) {
+                    return Array.from(new Set([...seleccionados, ...ids]));
+                  }
+                  return seleccionados.filter((id) => !ids.includes(id));
+                })
+              }
+              onReasignarIndividual={setTramiteReasignacion}
+            />
           </details>
           <details>
             <summary>Trámites pasados a legal ({pasadosLegalVista.length})</summary>
@@ -2470,6 +2553,28 @@ function DashboardTecnico({
 
       <h3>Trámites pasados a legal (Resumen por técnico)</h3>
       <TablaPasadosLegal rows={pasadosLegalAgrupados} />
+
+      {tramiteReasignacion && (
+        <ModalReasignacionIndividual
+          tramite={tramiteReasignacion}
+          responsables={responsablesDisponibles}
+          cargaPorResponsable={cargaPorResponsable}
+          onClose={() => setTramiteReasignacion(null)}
+        />
+      )}
+
+      {modalMasivoAbierto && (
+        <ModalReasignacionMasiva
+          tramites={tramitesSeleccionados}
+          responsables={responsablesDisponibles}
+          cargaPorResponsable={cargaPorResponsable}
+          onClose={() => setModalMasivoAbierto(false)}
+          onSuccess={() => {
+            setModalMasivoAbierto(false);
+            setTramitesSeleccionadosIds([]);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -3444,7 +3549,19 @@ function TablaPasadosLegal({
   );
 }
 
-function TablaTramitesTecnico({ tramites }: { tramites: TramiteNormalizado[] }) {
+function TablaTramitesTecnico({
+  tramites,
+  tramitesSeleccionadosIds = [],
+  onToggleTramite,
+  onToggleTodos,
+  onReasignarIndividual,
+}: {
+  tramites: TramiteNormalizado[];
+  tramitesSeleccionadosIds?: string[];
+  onToggleTramite?: (id: string) => void;
+  onToggleTodos?: (ids: string[], seleccionar: boolean) => void;
+  onReasignarIndividual?: (tramite: TramiteNormalizado) => void;
+}) {
   if (tramites.length === 0) {
     return <p className="empty-state">No hay trámites para este técnico</p>;
   }
@@ -3455,12 +3572,29 @@ function TablaTramitesTecnico({ tramites }: { tramites: TramiteNormalizado[] }) 
     if (prioridad(b) !== prioridad(a)) return prioridad(b) - prioridad(a);
     return (a.diasRestantes ?? 9999) - (b.diasRestantes ?? 9999);
   });
+  const idsOrdenados = ordenados.map((tramite) => tramite.id);
+  const todosSeleccionados =
+    idsOrdenados.length > 0 &&
+    idsOrdenados.every((id) => tramitesSeleccionadosIds.includes(id));
+  const puedeSeleccionar = Boolean(onToggleTramite && onToggleTodos);
 
   return (
     <div className="tramites-table-wrapper">
       <table className="tramites-table">
         <thead>
           <tr>
+            {puedeSeleccionar && (
+              <th className="selection-cell">
+                <input
+                  type="checkbox"
+                  checked={todosSeleccionados}
+                  onChange={(event) =>
+                    onToggleTodos?.(idsOrdenados, event.target.checked)
+                  }
+                  aria-label="Seleccionar todos los tramites visibles"
+                />
+              </th>
+            )}
             <th>Expediente</th>
             <th>Trámite</th>
             <th>Técnico asignado</th>
@@ -3477,11 +3611,31 @@ function TablaTramitesTecnico({ tramites }: { tramites: TramiteNormalizado[] }) 
             <th>Entrada técnica</th>
             <th>Salida técnica</th>
             <th>Días fase técnica</th>
+            {onReasignarIndividual && <th>Redistribución</th>}
           </tr>
         </thead>
         <tbody>
           {ordenados.map((tramite) => (
-            <tr key={tramite.id}>
+            <tr
+              key={tramite.id}
+              className={
+                tramitesSeleccionadosIds.includes(tramite.id)
+                  ? 'row-selected redistribution-row-selected'
+                  : undefined
+              }
+            >
+              {puedeSeleccionar && (
+                <td className="selection-cell">
+                  <input
+                    type="checkbox"
+                    checked={tramitesSeleccionadosIds.includes(tramite.id)}
+                    onChange={() => onToggleTramite?.(tramite.id)}
+                    aria-label={`Seleccionar tramite ${
+                      tramite.numeroTramite || tramite.id
+                    }`}
+                  />
+                </td>
+              )}
               <td className="cell-id">{tramite.numeroTramite || tramite.id}</td>
               <td
                 className="cell-tramite-code"
@@ -3512,10 +3666,365 @@ function TablaTramitesTecnico({ tramites }: { tramites: TramiteNormalizado[] }) 
               <td>{formatearFecha(tramite.fecha_inicio_gestion)}</td>
               <td>{formatearFecha(tramite.fecha_revision_tecnica)}</td>
               <td>{formatearTrazabilidad(tramite, tramite.diasEnFaseTecnica)}</td>
+              {onReasignarIndividual && (
+                <td>
+                  <button
+                    className="btn btn-outline btn-xs redistribution-row-action"
+                    onClick={() => onReasignarIndividual(tramite)}
+                  >
+                    Reasignar
+                  </button>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function ModalReasignacionIndividual({
+  tramite,
+  responsables,
+  cargaPorResponsable,
+  onClose,
+}: {
+  tramite: TramiteNormalizado;
+  responsables: string[];
+  cargaPorResponsable: Map<string, number>;
+  onClose: () => void;
+}) {
+  const [nuevoResponsable, setNuevoResponsable] = useState('');
+  const [motivo, setMotivo] = useState('');
+  const [comentario, setComentario] = useState('');
+  const [mensaje, setMensaje] = useState('');
+  const [procesando, setProcesando] = useState(false);
+  const responsableActual = tramite.colaboradorTecnico || tramite.personaAsignada || '';
+  const responsablesDestino = responsables.filter(Boolean);
+  const cargaActualOrigen = responsableActual
+    ? cargaPorResponsable.get(responsableActual) ?? 0
+    : undefined;
+  const cargaActualDestino = nuevoResponsable
+    ? cargaPorResponsable.get(nuevoResponsable) ?? 0
+    : undefined;
+
+  const confirmar = async () => {
+    if (!nuevoResponsable) {
+      setMensaje('Seleccione un nuevo responsable.');
+      return;
+    }
+    if (nuevoResponsable === responsableActual) {
+      setMensaje('El nuevo responsable no puede ser igual al responsable actual.');
+      return;
+    }
+    if (!motivo.trim()) {
+      setMensaje('Ingrese el motivo de la redistribucion.');
+      return;
+    }
+    const resumen = `Vas a reasignar el tramite ${
+      tramite.numeroTramite || tramite.id
+    } de ${responsableActual || 'Sin responsable'} hacia ${nuevoResponsable}.`;
+    if (!window.confirm(resumen)) return;
+
+    setProcesando(true);
+    const resultado = await reasignarTramite({
+      idTramite: tramite.id_tramite || tramite.id,
+      expediente: tramite.numeroTramite || tramite.id,
+      tramite: tramite.descripcion || tramite.tipo_tramite || obtenerNomenclaturaTramite(tramite),
+      responsableActual,
+      nuevoResponsable,
+      motivo: motivo.trim(),
+      comentario: comentario.trim(),
+    });
+    setProcesando(false);
+    setMensaje(resultado.mensaje);
+  };
+
+  return (
+    <div className="redistribution-modal-backdrop" role="presentation">
+      <div className="redistribution-modal" role="dialog" aria-modal="true">
+        <div className="redistribution-modal-header">
+          <div>
+            <span className="redistribution-kicker">Redistribucion de carga</span>
+            <h3>Reasignar tramite</h3>
+          </div>
+          <button className="modal-close-button" onClick={onClose} aria-label="Cerrar">
+            ×
+          </button>
+        </div>
+
+        <div className="redistribution-summary-card">
+          <span>Expediente</span>
+          <strong>{tramite.numeroTramite || tramite.id}</strong>
+          <span>Tramite</span>
+          <strong>{tramite.descripcion || tramite.tipo_tramite || obtenerNomenclaturaTramite(tramite)}</strong>
+          <span>Responsable actual</span>
+          <strong>{responsableActual || 'Sin responsable identificado'}</strong>
+        </div>
+
+        <div className="redistribution-form-grid">
+          <label>
+            Nuevo responsable
+            <select
+              value={nuevoResponsable}
+              onChange={(event) => setNuevoResponsable(event.target.value)}
+            >
+              <option value="">Seleccione responsable</option>
+              {responsablesDestino.map((responsable) => (
+                <option key={responsable} value={responsable}>
+                  {obtenerCodigoTecnico(responsable)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Motivo de redistribucion
+            <input
+              value={motivo}
+              onChange={(event) => setMotivo(event.target.value)}
+              placeholder="Balanceo operativo de carga"
+            />
+          </label>
+          <label className="redistribution-full-field">
+            Comentario opcional
+            <textarea
+              value={comentario}
+              onChange={(event) => setComentario(event.target.value)}
+              rows={3}
+              placeholder="Contexto adicional para bitacora futura"
+            />
+          </label>
+        </div>
+
+        <ImpactoRedistribucion
+          responsableActual={responsableActual}
+          nuevoResponsable={nuevoResponsable}
+          cantidad={1}
+          cargaActualOrigen={cargaActualOrigen}
+          cargaActualDestino={cargaActualDestino}
+        />
+
+        {mensaje && <p className="redistribution-message">{mensaje}</p>}
+
+        <div className="redistribution-modal-actions">
+          <button className="btn btn-outline btn-sm" onClick={onClose}>
+            Cancelar
+          </button>
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={confirmar}
+            disabled={procesando}
+          >
+            {procesando ? 'Preparando...' : 'Confirmar reasignacion'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ModalReasignacionMasiva({
+  tramites,
+  responsables,
+  cargaPorResponsable,
+  onClose,
+  onSuccess,
+}: {
+  tramites: TramiteNormalizado[];
+  responsables: string[];
+  cargaPorResponsable: Map<string, number>;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [nuevoResponsable, setNuevoResponsable] = useState('');
+  const [motivo, setMotivo] = useState('');
+  const [comentario, setComentario] = useState('');
+  const [mensaje, setMensaje] = useState('');
+  const [procesando, setProcesando] = useState(false);
+  const responsablesOrigen = Array.from(
+    new Set(tramites.map((tramite) => tramite.colaboradorTecnico).filter(Boolean))
+  ) as string[];
+  const responsableActual =
+    responsablesOrigen.length === 1 ? responsablesOrigen[0] : 'Multiples responsables';
+  const responsableOrigenParaImpacto =
+    responsablesOrigen.length === 1 ? responsablesOrigen[0] : '';
+  const cargaActualOrigen = responsableOrigenParaImpacto
+    ? cargaPorResponsable.get(responsableOrigenParaImpacto) ?? 0
+    : undefined;
+  const cargaActualDestino = nuevoResponsable
+    ? cargaPorResponsable.get(nuevoResponsable) ?? 0
+    : undefined;
+
+  const confirmar = async () => {
+    if (tramites.length === 0) {
+      setMensaje('No hay tramites seleccionados.');
+      return;
+    }
+    if (!nuevoResponsable) {
+      setMensaje('Seleccione un nuevo responsable.');
+      return;
+    }
+    if (responsablesOrigen.length === 1 && nuevoResponsable === responsablesOrigen[0]) {
+      setMensaje('El nuevo responsable no puede ser igual al responsable actual.');
+      return;
+    }
+    if (!motivo.trim()) {
+      setMensaje('Ingrese el motivo de la redistribucion.');
+      return;
+    }
+    const resumen = `Vas a reasignar ${tramites.length} tramites hacia ${nuevoResponsable}.`;
+    if (!window.confirm(resumen)) return;
+
+    setProcesando(true);
+    const resultado = await reasignarTramitesMasivo({
+      tramites: tramites.map((tramite) => ({
+        idTramite: tramite.id_tramite || tramite.id,
+        expediente: tramite.numeroTramite || tramite.id,
+        tramite: tramite.descripcion || tramite.tipo_tramite || obtenerNomenclaturaTramite(tramite),
+        responsableActual: tramite.colaboradorTecnico || tramite.personaAsignada,
+      })),
+      nuevoResponsable,
+      motivo: motivo.trim(),
+      comentario: comentario.trim(),
+    });
+    setProcesando(false);
+    setMensaje(resultado.mensaje);
+    if (resultado.ok) {
+      setTimeout(onSuccess, 900);
+    }
+  };
+
+  return (
+    <div className="redistribution-modal-backdrop" role="presentation">
+      <div className="redistribution-modal redistribution-modal-wide" role="dialog" aria-modal="true">
+        <div className="redistribution-modal-header">
+          <div>
+            <span className="redistribution-kicker">Redistribucion de carga</span>
+            <h3>Reasignar seleccionados</h3>
+          </div>
+          <button className="modal-close-button" onClick={onClose} aria-label="Cerrar">
+            ×
+          </button>
+        </div>
+
+        <div className="redistribution-summary-card redistribution-summary-grid">
+          <span>Seleccionados</span>
+          <strong>{tramites.length}</strong>
+          <span>Responsable actual</span>
+          <strong>{responsableActual}</strong>
+        </div>
+
+        <div className="redistribution-form-grid">
+          <label>
+            Nuevo responsable
+            <select
+              value={nuevoResponsable}
+              onChange={(event) => setNuevoResponsable(event.target.value)}
+            >
+              <option value="">Seleccione responsable</option>
+              {responsables.map((responsable) => (
+                <option key={responsable} value={responsable}>
+                  {obtenerCodigoTecnico(responsable)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Motivo obligatorio
+            <input
+              value={motivo}
+              onChange={(event) => setMotivo(event.target.value)}
+              placeholder="Redistribucion operativa de carga"
+            />
+          </label>
+          <label className="redistribution-full-field">
+            Comentario opcional
+            <textarea
+              value={comentario}
+              onChange={(event) => setComentario(event.target.value)}
+              rows={3}
+              placeholder="Observaciones para bitacora futura"
+            />
+          </label>
+        </div>
+
+        <ImpactoRedistribucion
+          responsableActual={responsableOrigenParaImpacto}
+          nuevoResponsable={nuevoResponsable}
+          cantidad={tramites.length}
+          cargaActualOrigen={cargaActualOrigen}
+          cargaActualDestino={cargaActualDestino}
+        />
+
+        <div className="redistribution-selected-list">
+          <h4>Resumen de tramites seleccionados</h4>
+          {tramites.slice(0, 8).map((tramite) => (
+            <div key={tramite.id}>
+              <span>{tramite.numeroTramite || tramite.id}</span>
+              <small>{obtenerNomenclaturaTramite(tramite)}</small>
+            </div>
+          ))}
+          {tramites.length > 8 && (
+            <p>+ {tramites.length - 8} tramites adicionales</p>
+          )}
+        </div>
+
+        {mensaje && <p className="redistribution-message">{mensaje}</p>}
+
+        <div className="redistribution-modal-actions">
+          <button className="btn btn-outline btn-sm" onClick={onClose}>
+            Cancelar
+          </button>
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={confirmar}
+            disabled={procesando || tramites.length === 0}
+          >
+            {procesando ? 'Preparando...' : 'Confirmar redistribucion'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ImpactoRedistribucion({
+  responsableActual,
+  nuevoResponsable,
+  cantidad,
+  cargaActualOrigen,
+  cargaActualDestino,
+}: {
+  responsableActual?: string;
+  nuevoResponsable?: string;
+  cantidad: number;
+  cargaActualOrigen?: number;
+  cargaActualDestino?: number;
+}) {
+  if (!nuevoResponsable) {
+    return null;
+  }
+
+  return (
+    <div className="redistribution-impact">
+      <h4>Impacto estimado en carga</h4>
+      {responsableActual && cargaActualOrigen !== undefined && (
+        <div>
+          <span title={responsableActual}>{obtenerCodigoTecnico(responsableActual)}</span>
+          <strong>
+            {cargaActualOrigen} → {Math.max(0, cargaActualOrigen - cantidad)}
+          </strong>
+        </div>
+      )}
+      {cargaActualDestino !== undefined && (
+        <div>
+          <span title={nuevoResponsable}>{obtenerCodigoTecnico(nuevoResponsable)}</span>
+          <strong>
+            {cargaActualDestino} → {cargaActualDestino + cantidad}
+          </strong>
+        </div>
+      )}
     </div>
   );
 }

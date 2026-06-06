@@ -4345,3 +4345,320 @@
 .dashboard-container.dark-dashboard .priority-item::after {
   background: #c99a32;
 }
+
+.redistribution-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.75rem 0 1rem;
+  padding: 0.95rem 1rem;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.88));
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.05);
+}
+
+.redistribution-toolbar p {
+  margin: 0.18rem 0 0;
+  color: #64748b;
+  font-size: 0.86rem;
+}
+
+.redistribution-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #0f5fa8;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.redistribution-kicker::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #a67c1b;
+}
+
+.redistribution-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+.selection-cell {
+  width: 42px;
+  min-width: 42px;
+  text-align: center !important;
+}
+
+.selection-cell input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: #0f5fa8;
+}
+
+.redistribution-row-selected {
+  background: rgba(15, 95, 168, 0.08) !important;
+}
+
+.redistribution-row-action {
+  white-space: nowrap;
+}
+
+.redistribution-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgba(15, 23, 42, 0.48);
+  backdrop-filter: blur(8px);
+}
+
+.redistribution-modal {
+  width: min(720px, 100%);
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 18px;
+  background: #ffffff;
+  color: #0f172a;
+  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.28);
+}
+
+.redistribution-modal-wide {
+  width: min(920px, 100%);
+}
+
+.redistribution-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.2rem 1.35rem 0.85rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.redistribution-modal-header h3 {
+  margin: 0.2rem 0 0;
+  color: #10233f;
+  font-size: 1.35rem;
+}
+
+.modal-close-button {
+  display: inline-grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.redistribution-summary-card,
+.redistribution-impact,
+.redistribution-selected-list {
+  margin: 1rem 1.35rem;
+  padding: 1rem;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.redistribution-summary-card {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 0.45rem 1rem;
+}
+
+.redistribution-summary-card span,
+.redistribution-impact span {
+  color: #64748b;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.redistribution-summary-card strong {
+  color: #0f172a;
+  font-size: 0.92rem;
+}
+
+.redistribution-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+  padding: 0 1.35rem;
+}
+
+.redistribution-form-grid label {
+  display: grid;
+  gap: 0.35rem;
+  color: #475569;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.redistribution-form-grid input,
+.redistribution-form-grid select,
+.redistribution-form-grid textarea {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  border-radius: 10px;
+  background: #ffffff;
+  color: #0f172a;
+  padding: 0.7rem 0.78rem;
+  font: inherit;
+}
+
+.redistribution-full-field {
+  grid-column: 1 / -1;
+}
+
+.redistribution-impact {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.redistribution-impact h4,
+.redistribution-selected-list h4 {
+  margin: 0 0 0.2rem;
+  color: #10233f;
+  font-size: 0.95rem;
+}
+
+.redistribution-impact div,
+.redistribution-selected-list div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.redistribution-impact strong {
+  color: #0f5fa8;
+}
+
+.redistribution-selected-list {
+  max-height: 220px;
+  overflow: auto;
+}
+
+.redistribution-selected-list div {
+  padding: 0.48rem 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.redistribution-selected-list small,
+.redistribution-selected-list p {
+  color: #64748b;
+}
+
+.redistribution-message {
+  margin: 1rem 1.35rem 0;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid rgba(15, 95, 168, 0.24);
+  border-left: 4px solid #0f5fa8;
+  border-radius: 12px;
+  background: rgba(15, 95, 168, 0.08);
+  color: #0f3763;
+  font-weight: 700;
+}
+
+.redistribution-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.7rem;
+  padding: 1rem 1.35rem 1.25rem;
+}
+
+.dashboard-container.dark-dashboard .redistribution-toolbar {
+  border-color: rgba(100, 116, 139, 0.38);
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.96), rgba(30, 41, 59, 0.88));
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.22);
+}
+
+.dashboard-container.dark-dashboard .redistribution-toolbar p,
+.dashboard-container.dark-dashboard .redistribution-summary-card span,
+.dashboard-container.dark-dashboard .redistribution-impact span,
+.dashboard-container.dark-dashboard .redistribution-selected-list small,
+.dashboard-container.dark-dashboard .redistribution-selected-list p {
+  color: #94a3b8;
+}
+
+.dashboard-container.dark-dashboard .redistribution-modal {
+  border-color: rgba(100, 116, 139, 0.42);
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+.dashboard-container.dark-dashboard .redistribution-modal-header {
+  border-bottom-color: rgba(100, 116, 139, 0.34);
+}
+
+.dashboard-container.dark-dashboard .redistribution-modal-header h3,
+.dashboard-container.dark-dashboard .redistribution-summary-card strong,
+.dashboard-container.dark-dashboard .redistribution-impact h4,
+.dashboard-container.dark-dashboard .redistribution-selected-list h4 {
+  color: #f8fafc;
+}
+
+.dashboard-container.dark-dashboard .modal-close-button,
+.dashboard-container.dark-dashboard .redistribution-summary-card,
+.dashboard-container.dark-dashboard .redistribution-impact,
+.dashboard-container.dark-dashboard .redistribution-selected-list {
+  border-color: rgba(100, 116, 139, 0.36);
+  background: #111c31;
+  color: #e2e8f0;
+}
+
+.dashboard-container.dark-dashboard .redistribution-form-grid label {
+  color: #cbd5e1;
+}
+
+.dashboard-container.dark-dashboard .redistribution-form-grid input,
+.dashboard-container.dark-dashboard .redistribution-form-grid select,
+.dashboard-container.dark-dashboard .redistribution-form-grid textarea {
+  border-color: rgba(100, 116, 139, 0.52);
+  background: #0b1220;
+  color: #f8fafc;
+}
+
+.dashboard-container.dark-dashboard .redistribution-message {
+  border-color: rgba(56, 189, 248, 0.28);
+  border-left-color: #38bdf8;
+  background: rgba(14, 165, 233, 0.12);
+  color: #bae6fd;
+}
+
+@media (max-width: 760px) {
+  .redistribution-toolbar,
+  .redistribution-modal-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .redistribution-actions {
+    justify-content: stretch;
+  }
+
+  .redistribution-actions .btn,
+  .redistribution-modal-actions .btn {
+    width: 100%;
+  }
+
+  .redistribution-summary-card,
+  .redistribution-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
