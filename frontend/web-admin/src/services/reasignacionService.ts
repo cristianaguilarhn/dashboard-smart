@@ -74,7 +74,10 @@ async function enviarPost<TPayload>(
   return {
     ok: data.ok ?? true,
     ejecutadoEnSol: data.ejecutadoEnSol ?? true,
-    mensaje: data.mensaje ?? 'Redistribucion procesada por el backend seguro.',
+    mensaje:
+      data.mensaje ??
+      ('message' in data ? String(data.message) : undefined) ??
+      'Redistribucion procesada por el backend seguro.',
     resultadosParciales: data.resultadosParciales,
   };
 }
@@ -82,13 +85,13 @@ async function enviarPost<TPayload>(
 export async function reasignarTramite(
   payload: ReasignacionTramitePayload
 ): Promise<ReasignacionResultado> {
-  return enviarPost('/reasignar-tramite', payload);
+  return enviarPost('/api/reasignacion/tramite', payload);
 }
 
 export async function reasignarTramitesMasivo(
   payload: ReasignacionMasivaPayload
 ): Promise<ReasignacionResultado> {
-  return enviarPost('/reasignar-tramites', payload);
+  return enviarPost('/api/reasignacion/tramites', payload);
 }
 
 // Estructura esperada para bitacora futura en backend seguro:
