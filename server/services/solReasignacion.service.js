@@ -1,5 +1,8 @@
-function safeModeEnabled() {
-  return process.env.ENABLE_SOL_REAL_WRITE !== 'true';
+const SIMULATION_MESSAGE =
+  'Reasignacion simulada. Falta activar integracion real con SOL.';
+
+function solIntegrationEnabled() {
+  return process.env.SOL_INTEGRATION_ENABLED === 'true';
 }
 
 function badRequest(message) {
@@ -8,116 +11,130 @@ function badRequest(message) {
   return error;
 }
 
-function requireField(payload, field) {
-  if (!payload?.[field]) {
-    throw badRequest(`${field} requerido.`);
+function integrationError(message) {
+  const error = new Error(message);
+  error.statusCode = 502;
+  return error;
+}
+
+function toNumber(value, field) {
+  if (value === null || value === undefined || String(value).trim() === '') {
+    throw badRequest(`${field} debe ser numerico.`);
   }
+  const numberValue = Number(value);
+  if (!Number.isInteger(numberValue)) {
+    throw badRequest(`${field} debe ser numerico.`);
+  }
+  return numberValue;
 }
 
 export function getStatus() {
   return {
     ok: true,
     service: 'reasignacion',
-    mode: safeModeEnabled() ? 'safe' : 'real-write-not-implemented',
-    solWriteEnabled: !safeModeEnabled(),
+    solIntegrationEnabled: solIntegrationEnabled(),
+    mode: solIntegrationEnabled() ? 'real' : 'simulation',
   };
 }
 
-export function validarReasignacionIndividual(payload) {
-  requireField(payload, 'idTramite');
-  requireField(payload, 'expediente');
-  requireField(payload, 'nuevoResponsable');
-  requireField(payload, 'motivo');
-
-  if (
-    payload.responsableActual &&
-    payload.nuevoResponsable === payload.responsableActual
-  ) {
-    throw badRequest('nuevoResponsable no puede ser igual a responsableActual.');
+export function validateReasignacionTramites(payload) {
+  if (!Array.isArray(payload?.codigos) || payload.codigos.length === 0) {
+    throw badRequest('codigos debe ser un arreglo con al menos un elemento.');
   }
 
-  if (!safeModeEnabled()) {
-    return {
-      ok: false,
-      mode: 'real-write-not-implemented',
-      message: 'La escritura real hacia SOL aun no esta implementada.',
-    };
+  const codigos = payload.codigos.map((codigo, index) =>
+    toNumber(codigo, `codigos[${index}]`)
+  );
+  const responsable = toNumber(payload.responsable, 'responsable');
+  const nota = String(payload.nota || '').trim();
+
+  if (!nota) {
+    throw badRequest('nota obligatoria.');
   }
 
   return {
-    ok: true,
-    mode: 'safe',
-    message:
-      'Solicitud validada. No se ejecuto cambio real en SOL porque ENABLE_SOL_REAL_WRITE=false.',
-    data: sanitizeIndividualPayload(payload),
+    codigos,
+    responsable,
+    nota,
   };
 }
 
-export function validarReasignacionMasiva(payload) {
-  if (!Array.isArray(payload.tramites) || payload.tramites.length === 0) {
-    throw badRequest('tramites debe ser un arreglo no vacio.');
-  }
-  requireField(payload, 'nuevoResponsable');
-  requireField(payload, 'motivo');
+export async function reasignarTramites(payload) {
+  const data = validateReasignacionTramites(payload);
 
-  payload.tramites.forEach((tramite, index) => {
-    requireField(tramite, 'idTramite');
-    requireField(tramite, 'expediente');
-    if (!tramite.tramite) {
-      throw badRequest(`tramites[${index}].tramite requerido.`);
-    }
+  if (!solIntegrationEnabled()) {
+    return {
+      ok: true,
+      simulation: true,
+      simulacion: true,
+      ejecutadoEnSol: false,
+      message: SIMULATION_MESSAGE,
+      mensaje: SIMULATION_MESSAGE,
+      codigos: data.codigos,
+      responsable: data.responsable,
+    };
+  }
+
+  return callSolCambiarResponsables(data);
+}
+
+async function callSolCambiarResponsables(data) {
+  const baseUrl = String(process.env.SOL_API_BASE_URL || '').replace(/\/$/, '');
+  if (!baseUrl) {
+    throw integrationError('SOL_API_BASE_URL no esta configurado.');
+  }
+
+  const url = new URL(`${baseUrl}/api/Listas/CambiarResponsables`);
+  data.codigos.forEach((codigo) => {
+    url.searchParams.append('Codigos', String(codigo));
+  });
+  url.searchParams.set('Responsable', String(data.responsable));
+  url.searchParams.set('Nota', data.nota);
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: buildSolHeaders(),
   });
 
-  const responsables = Array.from(
-    new Set(payload.tramites.map((tramite) => tramite.responsableActual).filter(Boolean))
-  );
+  const responseText = await response.text();
+  const responseBody = parseJsonOrText(responseText);
 
-  if (responsables.length === 1 && responsables[0] === payload.nuevoResponsable) {
-    throw badRequest(
-      'nuevoResponsable no puede ser igual al responsableActual comun de los tramites.'
+  if (!response.ok) {
+    throw integrationError(
+      `SOL respondio con status ${response.status} al cambiar responsables.`
     );
   }
 
-  if (!safeModeEnabled()) {
-    return {
-      ok: false,
-      mode: 'real-write-not-implemented',
-      message: 'La escritura real hacia SOL aun no esta implementada.',
-    };
-  }
-
   return {
     ok: true,
-    mode: 'safe',
-    message:
-      'Solicitud masiva validada. No se ejecutaron cambios reales en SOL porque ENABLE_SOL_REAL_WRITE=false.',
-    total: payload.tramites.length,
-    data: {
-      tramites: payload.tramites.map(sanitizeTramiteMasivo),
-      nuevoResponsable: payload.nuevoResponsable,
-      motivo: payload.motivo,
-      comentario: payload.comentario || '',
-    },
+    simulation: false,
+    simulacion: false,
+    ejecutadoEnSol: true,
+    message: 'Reasignacion enviada a SOL.',
+    mensaje: 'Reasignacion enviada a SOL.',
+    codigos: data.codigos,
+    responsable: data.responsable,
+    solStatus: response.status,
+    solResponse: responseBody,
   };
 }
 
-function sanitizeIndividualPayload(payload) {
-  return {
-    idTramite: payload.idTramite,
-    expediente: payload.expediente,
-    tramite: payload.tramite || '',
-    responsableActual: payload.responsableActual || '',
-    nuevoResponsable: payload.nuevoResponsable,
-    motivo: payload.motivo,
-    comentario: payload.comentario || '',
-  };
+function buildSolHeaders() {
+  const headers = {};
+  const token = String(process.env.SOL_TOKEN || '').trim();
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  return headers;
 }
 
-function sanitizeTramiteMasivo(tramite) {
-  return {
-    idTramite: tramite.idTramite,
-    expediente: tramite.expediente,
-    tramite: tramite.tramite,
-    responsableActual: tramite.responsableActual || '',
-  };
+function parseJsonOrText(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
 }

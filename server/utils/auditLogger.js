@@ -4,7 +4,9 @@ const SENSITIVE_KEYS = new Set([
   'authorization',
   'jwt',
   'secret',
+  'SOL_PASSWORD',
   'SOL_APP_PASSWORD',
+  'SOL_TOKEN',
 ]);
 
 function sanitize(value) {

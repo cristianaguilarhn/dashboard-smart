@@ -2,8 +2,7 @@ import { Router } from 'express';
 import { createMockSession } from '../services/solAuth.service.js';
 import {
   getStatus,
-  validarReasignacionIndividual,
-  validarReasignacionMasiva,
+  reasignarTramites,
 } from '../services/solReasignacion.service.js';
 import { auditEvent } from '../utils/auditLogger.js';
 
@@ -34,44 +33,39 @@ router.post('/login', (req, res, next) => {
       message: 'Autorizacion simulada. Falta conectar autenticacion real con SOL.',
       token: session.token,
       expiresInMinutes: session.expiresInMinutes,
-      mode: 'safe',
+      mode: 'simulation',
     });
   } catch (error) {
     next(error);
   }
 });
 
-router.post('/tramite', (req, res, next) => {
-  try {
-    const payload = req.body || {};
-    const resultado = validarReasignacionIndividual(payload);
+router.post('/reasignar-tramites', async (req, res, next) => {
+  const payload = req.body || {};
 
-    auditEvent('reasignacion.tramite.validada', {
-      expediente: payload.expediente,
-      responsableActual: payload.responsableActual,
-      nuevoResponsable: payload.nuevoResponsable,
-      mode: 'safe',
+  try {
+    const resultado = await reasignarTramites(payload);
+
+    auditEvent('reasignacion.tramites.intento', {
+      fechaHora: new Date().toISOString(),
+      codigos: payload.codigos,
+      responsableDestino: payload.responsable,
+      nota: payload.nota,
+      resultado: resultado.ok ? 'ok' : 'error',
+      modo: resultado.simulation ? 'simulacion' : 'real',
     });
 
     res.json(resultado);
   } catch (error) {
-    next(error);
-  }
-});
-
-router.post('/tramites', (req, res, next) => {
-  try {
-    const payload = req.body || {};
-    const resultado = validarReasignacionMasiva(payload);
-
-    auditEvent('reasignacion.tramites.validada', {
-      total: Array.isArray(payload.tramites) ? payload.tramites.length : 0,
-      nuevoResponsable: payload.nuevoResponsable,
-      mode: 'safe',
+    auditEvent('reasignacion.tramites.intento', {
+      fechaHora: new Date().toISOString(),
+      codigos: payload.codigos,
+      responsableDestino: payload.responsable,
+      nota: payload.nota,
+      resultado: 'error',
+      modo: process.env.SOL_INTEGRATION_ENABLED === 'true' ? 'real' : 'simulacion',
+      error: error.message,
     });
-
-    res.json(resultado);
-  } catch (error) {
     next(error);
   }
 });

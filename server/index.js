@@ -31,7 +31,7 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'dashboard-smart-secure-server' });
 });
 
-app.use('/api/reasignacion', reasignacionRoutes);
+app.use('/api/dashboard', reasignacionRoutes);
 
 app.use((req, res) => {
   res.status(404).json({

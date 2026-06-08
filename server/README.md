@@ -1,14 +1,14 @@
 # Dashboard SMART Secure Server
 
-Backend seguro inicial para preparar la futura redistribucion de carga y reasignacion de tramites desde Dashboard SMART.
+Backend seguro inicial para preparar la redistribucion de carga y reasignacion de tramites desde Dashboard SMART.
 
 ## Estado actual
 
 - Modo seguro por defecto.
-- No conecta con SOL real.
+- No conecta con SOL real mientras `SOL_INTEGRATION_ENABLED=false`.
 - No mueve tramites reales.
 - No guarda credenciales ni tokens reales.
-- `ENABLE_SOL_REAL_WRITE=false` evita escrituras reales.
+- `SOL_INTEGRATION_ENABLED=false` evita escrituras reales.
 
 ## Instalar dependencias
 
@@ -25,13 +25,11 @@ Variables principales:
 
 ```bash
 PORT=4000
-SOL_API_BASE_URL=
-SOL_AUTH_MODE=manual
-SOL_APP_USER=
-SOL_APP_PASSWORD=
-JWT_SECRET=
-SESSION_TTL_MINUTES=30
-ENABLE_SOL_REAL_WRITE=false
+SOL_API_BASE_URL=https://URL_PREPRODUCCION/sol
+SOL_USERNAME=
+SOL_PASSWORD=
+SOL_TOKEN=
+SOL_INTEGRATION_ENABLED=false
 CORS_ORIGIN=http://localhost:5173,http://127.0.0.1:5173
 ```
 
@@ -52,14 +50,24 @@ npm run dev:server
 ## Endpoints disponibles
 
 ```http
-GET /api/reasignacion/status
-POST /api/reasignacion/login
-POST /api/reasignacion/tramite
-POST /api/reasignacion/tramites
+GET /api/dashboard/status
+POST /api/dashboard/login
+POST /api/dashboard/reasignar-tramites
 ```
 
-Todos los endpoints responden en modo seguro/controlado. La integracion real con SOL queda pendiente para una fase posterior.
+`POST /api/dashboard/reasignar-tramites` recibe:
+
+```json
+{
+  "codigos": [12345, 12346],
+  "responsable": 58,
+  "nota": "Redistribucion de carga operativa"
+}
+```
+
+El backend valida el payload y responde en modo simulacion mientras `SOL_INTEGRATION_ENABLED=false`.
+Cuando se active la integracion, llamara a `POST /api/Listas/CambiarResponsables` usando query params repetidos `Codigos`.
 
 ## Proximo paso
 
-Integrar autenticacion real con SOL desde este backend seguro, proteger rutas y habilitar escritura real solo cuando exista validacion funcional, auditoria y autorizacion institucional.
+Validar en preproduccion el contrato de `POST /api/Listas/CambiarResponsables` antes de activar `SOL_INTEGRATION_ENABLED=true`.

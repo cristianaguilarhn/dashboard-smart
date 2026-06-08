@@ -17,7 +17,7 @@ import { fetchTramitesDM } from '../services/solApi';
 import { calcularMetricasDashboard } from '../services/metricas';
 import {
   reasignarTramite,
-  reasignarTramitesMasivo,
+  reasignarTramites,
 } from '../services/reasignacionService';
 import {
   aplicarFiltroFecha,
@@ -4111,23 +4111,38 @@ function ModalReasignacionIndividual({
       setMensaje('Ingrese el motivo de la redistribucion.');
       return;
     }
+    const codigoTramite = obtenerCodigoInternoTramite(tramite);
+    if (codigoTramite === undefined) {
+      setMensaje('No se encontro el codigo interno numerico del tramite requerido por SOL.');
+      return;
+    }
+    const codigoResponsable = obtenerCodigoResponsable(nuevoResponsable);
+    if (codigoResponsable === undefined) {
+      setMensaje('No se pudo resolver el codigo numerico del nuevo responsable.');
+      return;
+    }
     const resumen = `Vas a reasignar el tramite ${
       tramite.numeroTramite || tramite.id
     } de ${responsableActual || 'Sin responsable'} hacia ${nuevoResponsable}.`;
     if (!window.confirm(resumen)) return;
 
     setProcesando(true);
-    const resultado = await reasignarTramite({
-      idTramite: tramite.id_tramite || tramite.id,
-      expediente: tramite.numeroTramite || tramite.id,
-      tramite: tramite.descripcion || tramite.tipo_tramite || obtenerNomenclaturaTramite(tramite),
-      responsableActual,
-      nuevoResponsable,
-      motivo: motivo.trim(),
-      comentario: comentario.trim(),
-    });
-    setProcesando(false);
-    setMensaje(resultado.mensaje);
+    try {
+      const resultado = await reasignarTramite({
+        codigo: codigoTramite,
+        responsable: codigoResponsable,
+        nota: comentario.trim() || motivo.trim(),
+      });
+      setMensaje(resultado.mensaje);
+    } catch (error) {
+      setMensaje(
+        error instanceof Error
+          ? `No se pudo enviar la reasignacion al backend seguro. ${error.message}`
+          : 'No se pudo enviar la reasignacion al backend seguro.'
+      );
+    } finally {
+      setProcesando(false);
+    }
   };
 
   return (
@@ -4213,6 +4228,34 @@ function ModalReasignacionIndividual({
   );
 }
 
+function obtenerCodigoInternoTramite(tramite: TramiteNormalizado): number | undefined {
+  const campos = tramite as unknown as Record<string, unknown>;
+  const candidatos = [
+    campos.codigoInterno,
+    campos.codigo_tramite,
+    campos.codigoTramite,
+    campos.codigo,
+    campos.Codigo,
+    campos.CodigoTramite,
+    tramite.id_tramite,
+    tramite.id,
+  ];
+
+  for (const candidato of candidatos) {
+    const texto = String(candidato || '').trim();
+    if (/^\d+$/.test(texto)) {
+      return Number(texto);
+    }
+  }
+
+  return undefined;
+}
+
+function obtenerCodigoResponsable(responsable: string): number | undefined {
+  const match = responsable.match(/\b\d+\b/);
+  return match ? Number(match[0]) : undefined;
+}
+
 function ModalReasignacionMasiva({
   tramites,
   responsables,
@@ -4262,25 +4305,40 @@ function ModalReasignacionMasiva({
       setMensaje('Ingrese el motivo de la redistribucion.');
       return;
     }
+    const codigos = tramites
+      .map(obtenerCodigoInternoTramite)
+      .filter((codigo): codigo is number => codigo !== undefined);
+    if (codigos.length !== tramites.length) {
+      setMensaje('Uno o mas tramites seleccionados no tienen codigo interno numerico requerido por SOL.');
+      return;
+    }
+    const codigoResponsable = obtenerCodigoResponsable(nuevoResponsable);
+    if (codigoResponsable === undefined) {
+      setMensaje('No se pudo resolver el codigo numerico del nuevo responsable.');
+      return;
+    }
     const resumen = `Vas a reasignar ${tramites.length} tramites hacia ${nuevoResponsable}.`;
     if (!window.confirm(resumen)) return;
 
     setProcesando(true);
-    const resultado = await reasignarTramitesMasivo({
-      tramites: tramites.map((tramite) => ({
-        idTramite: tramite.id_tramite || tramite.id,
-        expediente: tramite.numeroTramite || tramite.id,
-        tramite: tramite.descripcion || tramite.tipo_tramite || obtenerNomenclaturaTramite(tramite),
-        responsableActual: tramite.colaboradorTecnico || tramite.personaAsignada,
-      })),
-      nuevoResponsable,
-      motivo: motivo.trim(),
-      comentario: comentario.trim(),
-    });
-    setProcesando(false);
-    setMensaje(resultado.mensaje);
-    if (resultado.ok) {
-      setTimeout(onSuccess, 900);
+    try {
+      const resultado = await reasignarTramites({
+        codigos,
+        responsable: codigoResponsable,
+        nota: comentario.trim() || motivo.trim(),
+      });
+      setMensaje(resultado.mensaje);
+      if (resultado.ok) {
+        setTimeout(onSuccess, 900);
+      }
+    } catch (error) {
+      setMensaje(
+        error instanceof Error
+          ? `No se pudo enviar la reasignacion al backend seguro. ${error.message}`
+          : 'No se pudo enviar la reasignacion al backend seguro.'
+      );
+    } finally {
+      setProcesando(false);
     }
   };
 
