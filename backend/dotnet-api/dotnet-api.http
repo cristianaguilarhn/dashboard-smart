@@ -1,6 +1,11 @@
 @dotnet_api_HostAddress = http://localhost:5198
 
-GET {{dotnet_api_HostAddress}}/weatherforecast/
+GET {{dotnet_api_HostAddress}}/api/sol/metricas-dm
+Accept: application/json
+
+###
+
+GET {{dotnet_api_HostAddress}}/api/sol/legal-dm
 Accept: application/json
 
 ###

@@ -19,6 +19,7 @@ import {
   reasignarTramite,
   reasignarTramitesMasivo,
 } from '../services/reasignacionService';
+import { fetchTramitesFaseLegalDM } from '../services/solLegalApi';
 import {
   aplicarFiltroFecha,
   crearFiltroInicial,
@@ -37,6 +38,11 @@ import {
   RespuestaTramitesNormalizada,
   TramiteNormalizado,
 } from '../types/sol';
+import {
+  CondicionLegal,
+  RespuestaFaseLegalDM,
+  TramiteFaseLegalDM,
+} from '../types/solLegal';
 import '../styles/dashboard.css';
 import arsaLogo from '../assets/logo-arsa-2026-2030.png';
 
@@ -369,6 +375,10 @@ export function DashboardDM() {
   const [seccionActiva, setSeccionActiva] =
     useState<SeccionDashboard>('tecnica-vivo');
   const [modoOscuro, setModoOscuro] = useState(false);
+  const [datosLegalVivo, setDatosLegalVivo] =
+    useState<RespuestaFaseLegalDM | null>(null);
+  const [cargandoLegalVivo, setCargandoLegalVivo] = useState(false);
+  const [errorLegalVivo, setErrorLegalVivo] = useState<string | null>(null);
 
   const datosFiltrados = filteredData;
   const datosOriginalesVista = datosOriginales ?? datosFiltrados;
@@ -458,6 +468,12 @@ export function DashboardDM() {
   useEffect(() => {
     cargarDatos();
   }, []);
+
+  useEffect(() => {
+    if (seccionActiva === 'legal-vivo' && !datosLegalVivo && !cargandoLegalVivo) {
+      cargarDatosLegalVivo();
+    }
+  }, [seccionActiva, datosLegalVivo, cargandoLegalVivo]);
 
   useEffect(() => {
     setFilteredData(
@@ -568,61 +584,27 @@ export function DashboardDM() {
     } finally {
       setCargando(false);
     }
-    return;
-
-    // Si VITE_USE_MOCK_DATA es true, usar datos de simulación
-    if (import.meta.env.VITE_USE_MOCK_DATA === 'true') {
-      setDatosOriginales(MOCK_RESPUESTA_TRAMITES);
-      setEtiquetaFuente('Mock / Simulación');
-      setLastUpdate(MOCK_RESPUESTA_TRAMITES.fecha_actualizacion);
-      setCargando(false);
-      return;
-    }
-
-    try {
-      const response = await fetch('/api/sol/metricas-dm');
-      if (!response.ok) {
-        throw new Error(`Error en la API: ${response.status} ${response.statusText}`);
-      }
-      const result = await response.json();
-
-      if (!result.ok) {
-        throw new Error(result.error || 'La API no devolvió un resultado exitoso.');
-      }
-
-      // La API del backend ya debería devolver datos normalizados en `result.data`
-      // con la estructura de RespuestaTramitesNormalizada.
-      const datosNormalizados: RespuestaTramitesNormalizada = {
-        ...result.data,
-        // Las fechas pueden venir como strings desde el JSON
-        fecha_actualizacion: new Date(result.data.fecha_actualizacion),
-        tramites: result.data.tramites.map((tramite: any) => ({
-          ...tramite,
-          fechaInicio: new Date(tramite.fechaInicio),
-          fecha_inicio_gestion: tramite.fecha_inicio_gestion ? new Date(tramite.fecha_inicio_gestion) : undefined,
-          fecha_presentacion: tramite.fecha_presentacion ? new Date(tramite.fecha_presentacion) : undefined,
-          fecha_probable_salida: tramite.fecha_probable_salida ? new Date(tramite.fecha_probable_salida) : undefined,
-          fecha_revision_tecnica: tramite.fecha_revision_tecnica ? new Date(tramite.fecha_revision_tecnica) : undefined,
-          fecha_finalizacion: tramite.fecha_finalizacion ? new Date(tramite.fecha_finalizacion) : undefined,
-          fechaVencimiento: tramite.fechaVencimiento ? new Date(tramite.fechaVencimiento) : undefined,
-          fecha_vencimiento: tramite.fecha_vencimiento ? new Date(tramite.fecha_vencimiento) : undefined,
-          fecha_hoy: tramite.fecha_hoy ? new Date(tramite.fecha_hoy) : new Date(),
-        })),
-      };
-
-      setDatosOriginales(datosNormalizados);
-      setEtiquetaFuente(result.source || 'API SOL');
-      setLastUpdate(datosNormalizados.fecha_actualizacion);
-      setDatosDiagnostico(result.diagnostics);
-
-    } catch (err: any) {
-      setError(err instanceof Error ? err.message : 'Ocurrió un error desconocido');
-      setDatosOriginales(null);
-    } finally {
-      setCargando(false);
-    }
   };
 
+  const cargarDatosLegalVivo = async () => {
+    setCargandoLegalVivo(true);
+    setErrorLegalVivo(null);
+
+    try {
+      const resultado = await fetchTramitesFaseLegalDM();
+      setDatosLegalVivo(resultado);
+      setErrorLegalVivo(resultado.mensajeError || null);
+    } catch (err) {
+      setDatosLegalVivo(null);
+      setErrorLegalVivo(
+        err instanceof Error
+          ? `No se pudo cargar la fase legal en vivo. ${err.message}`
+          : 'No se pudo cargar la fase legal en vivo.'
+      );
+    } finally {
+      setCargandoLegalVivo(false);
+    }
+  };
   const cambiarPeriodo = (periodo: PeriodoFiltro) => {
     if (periodo === 'personalizado') {
       setFiltroFecha(
@@ -900,9 +882,10 @@ export function DashboardDM() {
 
       {seccionActiva === 'legal-vivo' && (
         <DashboardLegalVivo
-          tramites={datosOriginalesVista.tramites}
-          actualizarDatos={cargarDatos}
-          fechaActualizacion={datosOriginalesVista.fecha_actualizacion}
+          datos={datosLegalVivo}
+          cargando={cargandoLegalVivo}
+          error={errorLegalVivo}
+          actualizarDatos={cargarDatosLegalVivo}
         />
       )}
 
@@ -1329,107 +1312,903 @@ function FiltrosHistoricos({
   );
 }
 
-function DashboardLegalVivo({
-  tramites,
-  actualizarDatos,
-  fechaActualizacion,
-}: {
-  tramites: TramiteNormalizado[];
-  actualizarDatos: () => void;
-  fechaActualizacion?: Date;
-}) {
-  const activosLegal = obtenerTramitesLegalActivos(tramites);
-  const cargaLegal = calcularCargaLegal(tramites);
-  const margenCritico = activosLegal.filter((tramite) =>
-    ['Margen crítico', 'Margen ajustado', 'Tarde'].includes(clasificarMargenLegal(tramite))
+
+type FiltroCondicionLegalVivo = 'todos' | 'vencido' | 'por_vencer' | 'en_tiempo' | 'sin_fecha_probable' | 'margen_critico';
+type OrdenLegalVivo = 'prioridad' | 'dias_legal' | 'dias_restantes' | 'expediente';
+type VistaCargaLegal = 'dia' | 'oficial';
+type BucketLegalResolucion = SeriePlazoResolucion;
+type FiltroDiasResolucionLegal = SeriePlazoResolucion | 'todos';
+
+const PLAZOS_LEGALES_RESOLUCION = SERIES_PLAZOS_RESOLUCION;
+
+function obtenerBucketLegalResolucion(tramite: TramiteFaseLegalDM): BucketLegalResolucion {
+  const serie = PLAZOS_LEGALES_RESOLUCION.find(
+    (item) => item.plazo !== undefined && item.plazo === tramite.diasResolucion
   );
-  const maxCarga = Math.max(...cargaLegal.map((row) => row.total), 1);
+  return serie?.key || 'noDefinido';
+}
+
+function obtenerCondicionLegalPrioridad(tramite: TramiteFaseLegalDM): string {
+  if (tramite.condicion === 'vencido') return 'Vencido';
+  if (tramite.condicion === 'por_vencer') return 'Próximo a vencer';
+  if (tramite.condicion === 'sin_fecha_probable') return 'Sin plazo';
+  return 'En plazo';
+}
+
+function prioridadTramiteLegal(tramite: TramiteFaseLegalDM): number {
+  if (tramite.condicion === 'vencido') return 5;
+  if (tramite.margenCriticoDesdeTecnica) return 4;
+  if (tramite.condicion === 'por_vencer') return 3;
+  if (tramite.condicion === 'sin_fecha_probable') return 2;
+  return 1;
+}
+
+function cumpleFiltroLegal(tramite: TramiteFaseLegalDM, filtro: FiltroCondicionLegalVivo): boolean {
+  if (filtro === 'todos') return true;
+  if (filtro === 'margen_critico') return tramite.margenCriticoDesdeTecnica;
+  return tramite.condicion === filtro;
+}
+
+function ordenarTramitesLegal(a: TramiteFaseLegalDM, b: TramiteFaseLegalDM, orden: OrdenLegalVivo): number {
+  if (orden === 'dias_legal') return (b.diasEnLegal ?? -1) - (a.diasEnLegal ?? -1);
+  if (orden === 'dias_restantes') return (a.diasRestantes ?? Number.MAX_SAFE_INTEGER) - (b.diasRestantes ?? Number.MAX_SAFE_INTEGER);
+  if (orden === 'expediente') return a.expediente.localeCompare(b.expediente);
+  const prioridad = prioridadTramiteLegal(b) - prioridadTramiteLegal(a);
+  return prioridad !== 0 ? prioridad : (b.diasEnLegal ?? -1) - (a.diasEnLegal ?? -1);
+}
+
+function etiquetaFiltroLegal(filtro: FiltroCondicionLegalVivo): string {
+  if (filtro === 'vencido') return 'Vencidos';
+  if (filtro === 'por_vencer') return 'Proximos a vencer';
+  if (filtro === 'en_tiempo') return 'En plazo';
+  if (filtro === 'sin_fecha_probable') return 'Sin fecha probable';
+  if (filtro === 'margen_critico') return 'Margen critico';
+  return 'Todos';
+}
+
+function PanelPrioridadOperativaLegal({
+  tramites,
+  totalActivos,
+}: {
+  tramites: TramiteFaseLegalDM[];
+  totalActivos: number;
+}) {
+  const [pagina, setPagina] = useState(1);
+  const [filtro, setFiltro] = useState<'todos' | 'vencido' | 'por_vencer' | 'sin_plazo'>(
+    'todos'
+  );
+  const filasPorPagina = 6;
+  const tramitesPrioridad = useMemo(
+    () =>
+      tramites
+        .filter((tramite) => {
+          if (filtro === 'vencido') return tramite.condicion === 'vencido';
+          if (filtro === 'por_vencer') return tramite.condicion === 'por_vencer';
+          if (filtro === 'sin_plazo') return tramite.condicion === 'sin_fecha_probable';
+          return (
+            tramite.condicion === 'vencido' ||
+            tramite.condicion === 'por_vencer' ||
+            tramite.condicion === 'sin_fecha_probable'
+          );
+        })
+        .sort((a, b) => prioridadTramiteLegal(b) - prioridadTramiteLegal(a)),
+    [filtro, tramites]
+  );
+  const totalPaginas = Math.max(1, Math.ceil(tramitesPrioridad.length / filasPorPagina));
+  const inicio = (pagina - 1) * filasPorPagina;
+  const tramitesPagina = tramitesPrioridad.slice(inicio, inicio + filasPorPagina);
+
+  useEffect(() => {
+    setPagina(1);
+  }, [filtro, tramites]);
 
   return (
-    <div className="section live-section">
-      <div className="section-title-row">
+    <section className="priority-panel legal-priority-panel">
+      <div className="priority-header">
         <div>
-          <h2>Fase legal en vivo</h2>
-          <div className="live-status">
-            <span className="live-badge">Datos en vivo / corte actual</span>
-            {fechaActualizacion && (
-              <span>
-                Última actualización: {fechaActualizacion.toLocaleString('es-HN')}
-              </span>
-            )}
-          </div>
-          <p className="section-subtitle">
-            Carga legal activa, vencimientos y margen recibido desde técnica.
+          <h2>Prioridad operativa actual</h2>
+          <p>
+            Alertas del corte actual de SOL para actuar sobre vencidos, próximos
+            a vencer y trámites sin plazo definido.
           </p>
         </div>
-        <button className="btn btn-primary btn-sm" onClick={actualizarDatos}>
-          Actualizar
-        </button>
+        <span className="priority-badge">{totalActivos} activos en legal</span>
       </div>
 
-      <div className="summary-grid">
-        <MetricCard valor={activosLegal.length} etiqueta="Total en fase legal" />
-        <MetricCard
-          valor={cargaLegal.length}
-          etiqueta="Legales con carga"
-          variante="info"
-        />
-        <MetricCard
-          valor={activosLegal.filter((t) => t.estado === 'por_vencer').length}
-          etiqueta="Próximos a vencer"
-          variante="alert"
-        />
-        <MetricCard
-          valor={margenCritico.length}
-          etiqueta="Margen crítico desde técnica"
-          variante="warning"
-        />
+      <div className="priority-kpis">
+        <MetricCard valor={tramites.filter((t) => t.condicion === 'vencido').length} etiqueta="Vencidos" variante="warning" />
+        <MetricCard valor={tramites.filter((t) => t.condicion === 'por_vencer').length} etiqueta="Próximos a vencer" variante="alert" />
+        <MetricCard valor={tramites.filter((t) => t.condicion === 'sin_fecha_probable').length} etiqueta="Sin plazo definido" variante="info" />
       </div>
 
-      <div className="tramites-table-wrapper">
-        <table className="tramites-table executive-table">
-          <thead>
-            <tr>
-              <th>Legal / oficial</th>
-              <th>Total</th>
-              <th>Próximos</th>
-              <th>Vencidos</th>
-              <th>Requeridos</th>
-              <th>Margen crítico</th>
-              <th>Carga</th>
-            </tr>
-          </thead>
-          <tbody>
-            {cargaLegal.map((row) => (
-              <tr key={row.responsable}>
-                <td className="cell-id">{row.responsable}</td>
-                <td>{row.total}</td>
-                <td>{row.proximos}</td>
-                <td>{row.vencidos}</td>
-                <td>{row.requeridos}</td>
-                <td>{row.margenCritico}</td>
-                <td>
-                  <div className="load-cell">
-                    <div className="load-track">
-                      <div
-                        className="load-bar"
-                        style={{ width: `${Math.max(4, (row.total / maxCarga) * 100)}%` }}
-                      />
-                    </div>
-                    <span>{row.total}</span>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="priority-carousel-toolbar">
+        <div className="priority-filter-group" aria-label="Filtros de prioridad legal">
+          {[
+            ['todos', 'Todos'],
+            ['vencido', 'Vencidos'],
+            ['por_vencer', 'Próximos'],
+            ['sin_plazo', 'Sin plazo'],
+          ].map(([id, label]) => (
+            <button
+              key={id}
+              className={`priority-filter-button ${filtro === id ? 'active' : ''}`}
+              onClick={() => setFiltro(id as typeof filtro)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="priority-carousel-controls">
+          <span>
+            {tramitesPrioridad.length === 0
+              ? 'Sin trámites para revisar'
+              : `Mostrando ${inicio + 1}-${Math.min(
+                  inicio + filasPorPagina,
+                  tramitesPrioridad.length
+                )} de ${tramitesPrioridad.length}`}
+          </span>
+          <button
+            className="btn btn-outline btn-sm"
+            disabled={pagina === 1}
+            onClick={() => setPagina((actual) => Math.max(1, actual - 1))}
+          >
+            Anterior
+          </button>
+          <button
+            className="btn btn-outline btn-sm"
+            disabled={pagina === totalPaginas || tramitesPrioridad.length === 0}
+            onClick={() => setPagina((actual) => Math.min(totalPaginas, actual + 1))}
+          >
+            Siguiente
+          </button>
+        </div>
       </div>
 
-      {margenCritico.length === 0 ? (
-        <p className="empty-state">Sin trámites enviados a legal con margen crítico.</p>
-      ) : (
-        <TablaTramitesPasadosLegal tramites={margenCritico.slice(0, 20)} />
+      <div className="priority-list">
+        {tramitesPagina.map((tramite) => (
+          <article className={`priority-item priority-${tramite.condicion}`} key={tramite.id}>
+            <div className="priority-card-top">
+              <strong className="priority-expediente">{tramite.expediente}</strong>
+              <span className={`priority-status status-${tramite.condicion}`}>
+                {obtenerCondicionLegalPrioridad(tramite)}
+              </span>
+            </div>
+            <div className="priority-card-person" title={tramite.emailOficial || tramite.oficialLegal}>
+              {tramite.oficialLegal || 'Sin oficial legal'}
+            </div>
+            <dl className="priority-card-meta legal-priority-meta">
+              <div className="legal-priority-phase">
+                <dt>Fase</dt>
+                <dd title={tramite.fase || 'Legal'}>{tramite.fase || 'Legal'}</dd>
+              </div>
+              <div>
+                <dt>Salida probable</dt>
+                <dd>{formatearFechaNullable(tramite.fechaProbableSalida)}</dd>
+              </div>
+              <div>
+                <dt>Días restantes</dt>
+                <dd>{formatearNumeroNullable(tramite.diasRestantes)}</dd>
+              </div>
+            </dl>
+          </article>
+        ))}
+      </div>
+      {tramitesPrioridad.length === 0 && (
+        <p className="empty-state">No hay trámites en esta categoría de prioridad.</p>
       )}
+    </section>
+  );
+}
+
+type FilaMatrizLegal = {
+  oficialLegal: string;
+  emailOficial?: string;
+  p3: number;
+  p5: number;
+  p8: number;
+  p10: number;
+  p15: number;
+  p20: number;
+  p30: number;
+  p40: number;
+  p45: number;
+  p60: number;
+  p90: number;
+  noDefinido: number;
+  total: number;
+  porcentaje: number;
+  salidasLegal: number;
+  cargaPonderada: number;
+  vencidos: number;
+  proximos: number;
+  enPlazo: number;
+  sinFechaProbable: number;
+  margenCritico: number;
+  promedioDiasEnLegal: number | null;
+  mayorAtraso: number | null;
+};
+
+function crearFilaMatrizLegal(oficialLegal: string, emailOficial?: string): FilaMatrizLegal {
+  return {
+    oficialLegal,
+    emailOficial,
+    p3: 0,
+    p5: 0,
+    p8: 0,
+    p10: 0,
+    p15: 0,
+    p20: 0,
+    p30: 0,
+    p40: 0,
+    p45: 0,
+    p60: 0,
+    p90: 0,
+    noDefinido: 0,
+    total: 0,
+    porcentaje: 0,
+    salidasLegal: 0,
+    cargaPonderada: 0,
+    vencidos: 0,
+    proximos: 0,
+    enPlazo: 0,
+    sinFechaProbable: 0,
+    margenCritico: 0,
+    promedioDiasEnLegal: null,
+    mayorAtraso: null,
+  };
+}
+
+function construirMatrizLegal(tramites: TramiteFaseLegalDM[]): FilaMatrizLegal[] {
+  const rows = new Map<string, FilaMatrizLegal & { sumaDiasLegal: number; conteoDiasLegal: number }>();
+
+  tramites.forEach((tramite) => {
+    const oficialLegal = tramite.oficialLegal || 'No disponible';
+    if (!rows.has(oficialLegal)) {
+      rows.set(oficialLegal, {
+        ...crearFilaMatrizLegal(oficialLegal, tramite.emailOficial),
+        sumaDiasLegal: 0,
+        conteoDiasLegal: 0,
+      });
+    }
+
+    const row = rows.get(oficialLegal)!;
+    const bucket = obtenerBucketLegalResolucion(tramite);
+    row[bucket] += 1;
+    row.total += 1;
+    row.cargaPonderada += obtenerPesoCargaPorPlazo(tramite.diasResolucion ?? undefined);
+
+    if (tramite.condicion === 'vencido') row.vencidos += 1;
+    if (tramite.condicion === 'por_vencer') row.proximos += 1;
+    if (tramite.condicion === 'en_tiempo') row.enPlazo += 1;
+    if (tramite.condicion === 'sin_fecha_probable') row.sinFechaProbable += 1;
+    if (tramite.margenCriticoDesdeTecnica) row.margenCritico += 1;
+    if (tramite.diasEnLegal !== null) {
+      row.sumaDiasLegal += tramite.diasEnLegal;
+      row.conteoDiasLegal += 1;
+    }
+    if (tramite.diasRestantes !== null && tramite.diasRestantes < 0) {
+      const atraso = Math.abs(tramite.diasRestantes);
+      row.mayorAtraso = Math.max(row.mayorAtraso ?? 0, atraso);
+    }
+  });
+
+  const totalGeneral = tramites.length;
+  return Array.from(rows.values())
+    .map(({ sumaDiasLegal, conteoDiasLegal, ...row }) => ({
+      ...row,
+      porcentaje: totalGeneral > 0 ? (row.total / totalGeneral) * 100 : 0,
+      promedioDiasEnLegal:
+        conteoDiasLegal > 0 ? Math.round((sumaDiasLegal / conteoDiasLegal) * 10) / 10 : null,
+    }))
+    .sort((a, b) => {
+      if (b.cargaPonderada !== a.cargaPonderada) return b.cargaPonderada - a.cargaPonderada;
+      if (b.vencidos !== a.vencidos) return b.vencidos - a.vencidos;
+      if (b.proximos !== a.proximos) return b.proximos - a.proximos;
+      if (b.total !== a.total) return b.total - a.total;
+      return a.oficialLegal.localeCompare(b.oficialLegal);
+    });
+}
+
+function CargaActivaLegalPorDiaResolucion({
+  matriz,
+}: {
+  matriz: FilaMatrizLegal[];
+}) {
+  const [diaSeleccionado, setDiaSeleccionado] = useState<SeriePlazoResolucion>(
+    PLAZOS_LEGALES_RESOLUCION[0].key
+  );
+  const dataPorDia = PLAZOS_LEGALES_RESOLUCION.map((serie) => {
+    const oficiales = matriz
+      .map((row) => ({
+        key: row.oficialLegal,
+        value: row[serie.key] as number,
+      }))
+      .filter((item) => item.value > 0)
+      .sort((a, b) => {
+        if (b.value !== a.value) return b.value - a.value;
+        return a.key.localeCompare(b.key);
+      });
+    const total = oficiales.reduce((sum, item) => sum + item.value, 0);
+
+    return {
+      dia: serie.label,
+      key: serie.key,
+      total,
+      oficiales,
+      colorClassName: serie.className,
+    };
+  });
+  const totalGeneral = dataPorDia.reduce((sum, item) => sum + item.total, 0);
+  const grupoSeleccionado =
+    dataPorDia.find((grupo) => grupo.key === diaSeleccionado) ?? dataPorDia[0];
+
+  return (
+    <div className="chart-card chart-card-wide day-resolution-panel">
+      <div className="chart-card-header">
+        <div>
+          <h3>Carga activa por día de resolución</h3>
+          <p>Distribución legal del corte actual por plazo exacto y oficial.</p>
+        </div>
+        <div className="chart-stat">
+          <strong>{totalGeneral}</strong>
+          <span>activos</span>
+        </div>
+      </div>
+
+      <div className="day-summary-grid">
+        {dataPorDia.map((grupo) => (
+          <button
+            key={grupo.dia}
+            className={`day-summary-card ${grupo.colorClassName} ${
+              grupo.key === grupoSeleccionado.key ? 'selected' : ''
+            }`}
+            onClick={() => setDiaSeleccionado(grupo.key)}
+            type="button"
+          >
+            <span className="day-summary-dot" />
+            <strong>{grupo.dia}</strong>
+            <span>{grupo.total} trámites</span>
+            <small>{grupo.oficiales.length} oficiales</small>
+          </button>
+        ))}
+      </div>
+
+      <div className={`day-main-chart ${grupoSeleccionado.colorClassName}`}>
+        <div className="day-main-chart-header">
+          <div>
+            <h4>Carga activa - {grupoSeleccionado.dia}</h4>
+            <p>Oficiales legales ordenados por mayor carga.</p>
+          </div>
+          <div className="day-main-chart-total">
+            <strong>{grupoSeleccionado.total}</strong>
+            <span>trámites</span>
+          </div>
+        </div>
+        <ThinHorizontalBarChart
+          data={grupoSeleccionado.oficiales}
+          selectedDay={grupoSeleccionado.dia}
+          valueLabel="trámites"
+          maxItems={14}
+          colorClassName={grupoSeleccionado.colorClassName}
+          dayLabel={grupoSeleccionado.dia}
+        />
+      </div>
+    </div>
+  );
+}
+
+function DashboardLegalVivo({ datos, cargando, error, actualizarDatos }: {
+  datos: RespuestaFaseLegalDM | null;
+  cargando: boolean;
+  error: string | null;
+  actualizarDatos: () => void;
+}) {
+  const [oficialSeleccionado, setOficialSeleccionado] = useState<string | null>(null);
+  const [filtroCondicion, setFiltroCondicion] = useState<FiltroCondicionLegalVivo>('todos');
+  const [filtroDiasResolucion, setFiltroDiasResolucion] =
+    useState<FiltroDiasResolucionLegal>('todos');
+  const [filtroEstadoFase, setFiltroEstadoFase] = useState('todos');
+  const [orden, setOrden] = useState<OrdenLegalVivo>('prioridad');
+  const [busqueda, setBusqueda] = useState('');
+  const [vistaCarga, setVistaCarga] = useState<VistaCargaLegal>('dia');
+  const [pagina, setPagina] = useState(1);
+
+  const tramites = datos?.tramites || [];
+  const metricasLegal = datos?.metricas;
+  const filasPorPagina = 12;
+  const busquedaNormalizada = busqueda.trim().toLowerCase();
+
+  const tramitesFiltrados = tramites
+    .filter((tramite) => {
+      if (oficialSeleccionado && tramite.oficialLegal !== oficialSeleccionado) return false;
+      if (!cumpleFiltroLegal(tramite, filtroCondicion)) return false;
+      if (
+        filtroDiasResolucion !== 'todos' &&
+        obtenerBucketLegalResolucion(tramite) !== filtroDiasResolucion
+      ) {
+        return false;
+      }
+      if (
+        filtroEstadoFase !== 'todos' &&
+        tramite.estado !== filtroEstadoFase &&
+        tramite.fase !== filtroEstadoFase
+      ) {
+        return false;
+      }
+      if (!busquedaNormalizada) return true;
+      return [tramite.expediente, tramite.codigoInterno, tramite.tramite, tramite.oficialLegal, tramite.estado, tramite.fase]
+        .filter(Boolean)
+        .some((valor) => String(valor).toLowerCase().includes(busquedaNormalizada));
+    })
+    .sort((a, b) => ordenarTramitesLegal(a, b, orden));
+  const opcionesEstadoFase = Array.from(
+    new Set(
+      tramites
+        .flatMap((tramite) => [tramite.estado, tramite.fase])
+        .filter((valor) => valor && valor !== 'No disponible')
+    )
+  ).sort((a, b) => a.localeCompare(b));
+
+  const totalPaginas = Math.max(1, Math.ceil(tramitesFiltrados.length / filasPorPagina));
+  const inicio = (pagina - 1) * filasPorPagina;
+  const tramitesPagina = tramitesFiltrados.slice(inicio, inicio + filasPorPagina);
+  const matrizLegal = construirMatrizLegal(tramitesFiltrados);
+  const matrizLegalCompleta = construirMatrizLegal(tramites);
+  const maxCarga = Math.max(...matrizLegal.map((row) => row.cargaPonderada || row.total), 1);
+  const resumenPorPlazo = PLAZOS_LEGALES_RESOLUCION.reduce(
+    (acc, serie) => ({
+      ...acc,
+      [serie.key]: tramitesFiltrados.filter((tramite) => obtenerBucketLegalResolucion(tramite) === serie.key).length,
+    }),
+    {} as Record<SeriePlazoResolucion, number>
+  );
+  const distribucionPorDia = PLAZOS_LEGALES_RESOLUCION.map((serie) => ({
+    key: serie.label,
+    value: resumenPorPlazo[serie.key],
+  }));
+  const cargaPorOficial = matrizLegal.map((row) => ({
+    key: row.oficialLegal,
+    value: row.total,
+  }));
+
+  useEffect(() => {
+    setPagina(1);
+  }, [oficialSeleccionado, filtroCondicion, filtroDiasResolucion, filtroEstadoFase, orden, busqueda]);
+
+  const limpiarFiltros = () => {
+    setOficialSeleccionado(null);
+    setFiltroCondicion('todos');
+    setFiltroDiasResolucion('todos');
+    setFiltroEstadoFase('todos');
+    setOrden('prioridad');
+    setBusqueda('');
+    setPagina(1);
+  };
+
+  const filtrarOficial = (oficial: string | null) => {
+    setOficialSeleccionado(oficial);
+    setFiltroCondicion('todos');
+  };
+
+  return (
+    <div className="legal-live-dashboard">
+      <PanelPrioridadOperativaLegal
+        tramites={tramites}
+        totalActivos={metricasLegal?.totalEnLegal ?? tramites.length}
+      />
+
+      <div className="section live-section">
+        <div className="section-title-row technical-title-row">
+          <div>
+            <h2>Dashboard legal</h2>
+            <div className="live-status">
+              <span className="live-badge">Datos en vivo / corte actual</span>
+              <span>Fuente: {datos?.fuenteDatos || 'Pendiente'}</span>
+              {datos?.fechaActualizacion && (
+                <span>Última actualización: {datos.fechaActualizacion.toLocaleString('es-HN')}</span>
+              )}
+            </div>
+            <p className="section-subtitle">
+              Carga activa, vencimientos y productividad legal calculados solo desde la API legal.
+            </p>
+          </div>
+          <div className="section-actions">
+            {(oficialSeleccionado || filtroCondicion !== 'todos' || filtroDiasResolucion !== 'todos' || filtroEstadoFase !== 'todos' || busqueda) && (
+              <button className="btn btn-outline btn-sm" onClick={limpiarFiltros}>
+                Volver
+              </button>
+            )}
+            <button className="btn btn-primary btn-sm" onClick={actualizarDatos} disabled={cargando}>
+              {cargando ? 'Actualizando...' : 'Actualizar'}
+            </button>
+          </div>
+        </div>
+
+        {error && <div className="alert alert-warning">{error}</div>}
+        {cargando && (
+          <div className="alert alert-info">
+            <span className="loading loading-spinner loading-sm"></span> Cargando fase legal...
+          </div>
+        )}
+
+        <div className="summary-grid">
+          <MetricCard valor={metricasLegal?.oficialesConCarga ?? matrizLegalCompleta.length} etiqueta="Oficiales activos" variante="info" />
+          <MetricCard valor={metricasLegal?.totalEnLegal ?? tramites.length} etiqueta="Trámites activos en legal" />
+          <MetricCard valor={0} etiqueta="Salidas de legal" variante="success" />
+          {PLAZOS_LEGALES_RESOLUCION.map((serie) => (
+            <MetricCard
+              key={serie.key}
+              valor={resumenPorPlazo[serie.key]}
+              etiqueta={serie.plazo === undefined ? 'Sin plazo' : `${serie.plazo} días`}
+            />
+          ))}
+          <MetricCard valor={metricasLegal?.vencidos ?? 0} etiqueta="Vencidos" variante="alert" />
+          <MetricCard valor={metricasLegal?.proximosAVencer ?? 0} etiqueta="Próximos" variante="warning" />
+          <MetricCard valor={metricasLegal?.sinFechaProbable ?? 0} etiqueta="Sin fecha probable" variante="info" />
+          <MetricCard valor={metricasLegal?.cargaPonderadaLegal ?? 0} etiqueta="Carga ponderada" variante="info" />
+        </div>
+
+        <div className="custom-range technical-filters legal-filters">
+          <label>
+            Oficial legal
+            <select
+              value={oficialSeleccionado || 'todos'}
+              onChange={(event) =>
+                filtrarOficial(event.target.value === 'todos' ? null : event.target.value)
+              }
+            >
+              <option value="todos">Todos los oficiales</option>
+              {matrizLegalCompleta.map((row) => (
+                <option key={row.oficialLegal} value={row.oficialLegal}>
+                  {row.oficialLegal}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Condición
+            <select
+              value={filtroCondicion}
+              onChange={(event) => setFiltroCondicion(event.target.value as FiltroCondicionLegalVivo)}
+            >
+              <option value="todos">Todos</option>
+              <option value="vencido">Vencidos</option>
+              <option value="por_vencer">Próximos</option>
+              <option value="en_tiempo">En plazo</option>
+              <option value="sin_fecha_probable">Sin fecha probable</option>
+              <option value="margen_critico">Margen crítico</option>
+            </select>
+          </label>
+          <label>
+            Orden
+            <select value={orden} onChange={(event) => setOrden(event.target.value as OrdenLegalVivo)}>
+              <option value="prioridad">Prioridad</option>
+              <option value="dias_legal">Más días en legal</option>
+              <option value="dias_restantes">Días restantes</option>
+              <option value="expediente">Expediente</option>
+            </select>
+          </label>
+          <label>
+            Días de resolución
+            <select
+              value={filtroDiasResolucion}
+              onChange={(event) =>
+                setFiltroDiasResolucion(event.target.value as FiltroDiasResolucionLegal)
+              }
+            >
+              <option value="todos">Todos los plazos</option>
+              {PLAZOS_LEGALES_RESOLUCION.map((serie) => (
+                <option key={serie.key} value={serie.key}>
+                  {serie.plazo === undefined ? 'No definido' : `${serie.plazo} días`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Estado o fase
+            <select value={filtroEstadoFase} onChange={(event) => setFiltroEstadoFase(event.target.value)}>
+              <option value="todos">Todos</option>
+              {opcionesEstadoFase.map((valor) => (
+                <option key={valor} value={valor}>
+                  {valor}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Buscar
+            <input
+              value={busqueda}
+              onChange={(event) => setBusqueda(event.target.value)}
+              placeholder="Expediente, trámite u oficial"
+            />
+          </label>
+          <button className="btn btn-outline btn-sm" onClick={limpiarFiltros}>
+            Limpiar filtros
+          </button>
+        </div>
+
+        {(oficialSeleccionado || filtroCondicion !== 'todos' || filtroDiasResolucion !== 'todos' || filtroEstadoFase !== 'todos') && (
+          <div className="active-filter-label">
+            {oficialSeleccionado ? 'Oficial: ' + oficialSeleccionado : 'Vista filtrada'} -{' '}
+            {etiquetaFiltroLegal(filtroCondicion)}
+          </div>
+        )}
+
+        <div className="view-switcher" aria-label="Selector de vista legal">
+          <button
+            className={'view-switcher-button ' + (vistaCarga === 'dia' ? 'active' : '')}
+            onClick={() => setVistaCarga('dia')}
+          >
+            Vista por día de resolución
+          </button>
+          <button
+            className={'view-switcher-button ' + (vistaCarga === 'oficial' ? 'active' : '')}
+            onClick={() => setVistaCarga('oficial')}
+          >
+            Vista por oficial legal
+          </button>
+        </div>
+
+        <div className="technical-charts legal-live-grid">
+          {vistaCarga === 'dia' ? (
+            <CargaActivaLegalPorDiaResolucion matriz={matrizLegal} />
+          ) : (
+            <div className="chart-card chart-card-wide">
+              <div className="chart-card-header">
+                <div>
+                  <h3>Carga activa por oficial legal</h3>
+                  <p>Barras ordenadas por carga activa del corte actual.</p>
+                </div>
+                <div className="chart-stat">
+                  <strong>{tramitesFiltrados.length}</strong>
+                  <span>activos</span>
+                </div>
+              </div>
+              <ThinHorizontalBarChart data={cargaPorOficial} maxItems={14} valueLabel="trámites" />
+            </div>
+          )}
+          <div className="chart-card">
+            <h3>Distribución por días de resolución</h3>
+            <ThinHorizontalBarChart data={distribucionPorDia} maxItems={12} valueLabel="trámites" />
+          </div>
+          <GraficoAlertasLegalPorOficial matriz={matrizLegal} onSeleccionarOficial={filtrarOficial} />
+          <GraficoSalidasLegalPorOficial />
+        </div>
+
+        <div className="chart-card chart-card-wide">
+          <div className="chart-card-header">
+            <div>
+              <h3>Matriz por oficial legal y días de resolución</h3>
+              <p>Solo trámites activos recibidos desde /api/sol/legal-dm.</p>
+            </div>
+          </div>
+          <div className="tramites-table-wrapper">
+            <table className="tramites-table executive-table">
+              <thead>
+                <tr>
+                  <th>Oficial legal</th>
+                  {PLAZOS_LEGALES_RESOLUCION.map((serie) => (
+                    <th key={serie.key}>{serie.plazo === undefined ? 'No definido' : `${serie.plazo} días`}</th>
+                  ))}
+                  <th>Total activo</th>
+                  <th>% carga</th>
+                  <th>Salidas de legal</th>
+                  <th>Carga ponderada</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {matrizLegal.map((row) => (
+                  <tr key={row.oficialLegal} className={oficialSeleccionado === row.oficialLegal ? 'row-selected' : ''}>
+                    <td className="cell-id">
+                      <button type="button" className="link-button" onClick={() => filtrarOficial(row.oficialLegal)}>
+                        {row.oficialLegal}
+                      </button>
+                    </td>
+                    {PLAZOS_LEGALES_RESOLUCION.map((serie) => (
+                      <td key={`${row.oficialLegal}-${serie.key}`}>{row[serie.key]}</td>
+                    ))}
+                    <td>{row.total}</td>
+                    <td>{formatearPorcentaje(row.porcentaje)}</td>
+                    <td>{row.salidasLegal}</td>
+                    <td>
+                      <div className="load-cell">
+                        <div className="load-track">
+                          <div
+                            className="load-bar"
+                            style={{ width: String(Math.max(4, ((row.cargaPonderada || row.total) / maxCarga) * 100)) + '%' }}
+                          />
+                        </div>
+                        <span>{row.cargaPonderada || row.total}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <button type="button" className="btn btn-outline btn-xs" onClick={() => filtrarOficial(row.oficialLegal)}>
+                        Ver detalle
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="empty-state">
+            Salidas de legal no disponibles en el corte vivo actual; se muestran en 0 sin estimación.
+          </p>
+        </div>
+
+        {oficialSeleccionado && (
+          <div className="section detail-panel">
+            <div className="section-title-row">
+              <div>
+                <span className="active-filter-label">Filtro activo: {oficialSeleccionado}</span>
+                <h2>Detalle del oficial legal seleccionado: {oficialSeleccionado}</h2>
+              </div>
+              <button className="btn btn-outline btn-sm" onClick={() => filtrarOficial(null)}>
+                Volver a la matriz completa
+              </button>
+            </div>
+            <ResumenDetalleLegal tramites={tramitesFiltrados} />
+            <details open>
+              <summary>Trámites activos en fase legal ({tramitesFiltrados.length})</summary>
+              <TablaTramitesFaseLegal tramites={tramitesFiltrados} />
+            </details>
+            <details>
+              <summary>Salidas de legal (0)</summary>
+              <p className="empty-state">Sin salidas de legal para mostrar con el corte actual.</p>
+            </details>
+          </div>
+        )}
+
+        <div className="chart-card chart-card-wide">
+          <div className="legal-detail-toolbar">
+            <h3>Detalle legal ({tramitesFiltrados.length})</h3>
+            <span>
+              {tramitesFiltrados.length === 0
+                ? 'Sin registros'
+                : String(inicio + 1) + '-' + String(Math.min(inicio + filasPorPagina, tramitesFiltrados.length)) + ' de ' + String(tramitesFiltrados.length)}
+            </span>
+            <div className="section-actions">
+              <button className="btn btn-outline btn-sm" disabled={pagina === 1} onClick={() => setPagina((actual) => Math.max(1, actual - 1))}>
+                Anterior
+              </button>
+              <button className="btn btn-outline btn-sm" disabled={pagina === totalPaginas} onClick={() => setPagina((actual) => Math.min(totalPaginas, actual + 1))}>
+                Siguiente
+              </button>
+            </div>
+          </div>
+          <TablaTramitesFaseLegal tramites={tramitesPagina} />
+        </div>
+
+        {!cargando && tramites.length === 0 && <p className="empty-state">No hay trámites legales para mostrar.</p>}
+        <h3>Salidas de legal (Resumen por oficial)</h3>
+        <TablaSalidasLegalPorOficial />
+      </div>
+    </div>
+  );
+}
+
+function TablaTramitesFaseLegal({ tramites, compacta = false }: { tramites: TramiteFaseLegalDM[]; compacta?: boolean }) {
+  if (tramites.length === 0) return <p className="empty-state">No hay trámites legales para mostrar.</p>;
+  return <div className="tramites-table-wrapper"><table className={'tramites-table executive-table ' + (compacta ? 'compact-tramites-table' : '')}><thead><tr><th>Expediente</th>{!compacta && <th>Trámite</th>}<th>Oficial legal</th>{!compacta && <th>Estado</th>}{!compacta && <th>Fase</th>}<th>Ingreso legal</th><th>Salida probable</th><th>Días legal</th><th>Días restantes</th><th>Condición</th>{!compacta && <th>Margen crítico</th>}{!compacta && <th>Código interno</th>}</tr></thead><tbody>{tramites.map((tramite) => <tr key={tramite.id}><td className="cell-id" title={tramite.expediente}>{tramite.expediente}</td>{!compacta && <td className="cell-descripcion">{tramite.tramite}</td>}<td title={tramite.emailOficial || tramite.oficialLegal}>{tramite.oficialLegal}</td>{!compacta && <td>{tramite.estado}</td>}{!compacta && <td>{tramite.fase}</td>}<td title={tramite.fuenteFechaIngresoLegal}>{formatearFechaNullable(tramite.fechaIngresoLegal)}</td><td>{formatearFechaNullable(tramite.fechaProbableSalida)}</td><td>{formatearNumeroNullable(tramite.diasEnLegal)}</td><td>{formatearNumeroNullable(tramite.diasRestantes)}</td><td><span className={'badge badge-' + tramite.condicion}>{formatearCondicionLegal(tramite.condicion)}</span></td>{!compacta && <td>{tramite.margenCriticoDesdeTecnica ? 'Sí' : 'No'}</td>}{!compacta && <td>{tramite.codigoInterno || tramite.expediente}</td>}</tr>)}</tbody></table></div>;
+}
+
+function GraficoAlertasLegalPorOficial({
+  matriz,
+  onSeleccionarOficial,
+}: {
+  matriz: FilaMatrizLegal[];
+  onSeleccionarOficial: (oficial: string | null) => void;
+}) {
+  const rows = matriz
+    .filter((row) => row.vencidos > 0 || row.proximos > 0)
+    .sort((a, b) => b.vencidos + b.proximos - (a.vencidos + a.proximos))
+    .slice(0, 10);
+  const max = Math.max(...rows.map((row) => row.vencidos + row.proximos), 1);
+
+  return (
+    <div className="chart-card">
+      <div className="chart-card-header">
+        <div>
+          <h3>Alertas operativas por oficial legal</h3>
+          <p>
+            Identifica oficiales con carga próxima a vencer o con mayor
+            concentración en plazos altos.
+          </p>
+        </div>
+      </div>
+      {rows.length === 0 ? (
+        <p className="empty-state">Sin alertas según los filtros actuales.</p>
+      ) : (
+        <div className="grouped-bars">
+          {rows.map((row) => (
+            <button
+              className="grouped-row grouped-row-actionable legal-grouped-row"
+              key={row.oficialLegal}
+              type="button"
+              onClick={() => onSeleccionarOficial(row.oficialLegal)}
+            >
+              <span title={row.oficialLegal}>{row.oficialLegal}</span>
+              <div className="grouped-track">
+                <i
+                  className="grouped-bar grouped-vencido"
+                  style={{ width: `${(row.vencidos / max) * 100}%` }}
+                  title={`Vencidos: ${row.vencidos}`}
+                />
+                <i
+                  className="grouped-bar grouped-proximo"
+                  style={{ width: `${(row.proximos / max) * 100}%` }}
+                  title={`Próximos: ${row.proximos}`}
+                />
+              </div>
+              <strong>{row.vencidos + row.proximos}</strong>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GraficoSalidasLegalPorOficial() {
+  return (
+    <div className="chart-card">
+      <div className="chart-card-header">
+        <div>
+          <h3>Salidas de legal por oficial</h3>
+          <p>Salida de trámites desde fase legal con datos disponibles del corte actual.</p>
+        </div>
+      </div>
+      <p className="empty-state">Sin salidas de legal para mostrar con el corte actual.</p>
+    </div>
+  );
+}
+
+function ResumenDetalleLegal({ tramites }: { tramites: TramiteFaseLegalDM[] }) {
+  const vencidos = tramites.filter((t) => t.condicion === 'vencido').length;
+  const proximos = tramites.filter((t) => t.condicion === 'por_vencer').length;
+  const sinFecha = tramites.filter((t) => t.condicion === 'sin_fecha_probable').length;
+  const cargaPonderada = tramites.reduce(
+    (sum, tramite) => sum + obtenerPesoCargaPorPlazo(tramite.diasResolucion ?? undefined),
+    0
+  );
+
+  return (
+    <div className="summary-grid detail-summary">
+      <MetricCard valor={tramites.length} etiqueta="Activos" />
+      <MetricCard valor={vencidos} etiqueta="Vencidos" variante="warning" />
+      <MetricCard valor={proximos} etiqueta="Próximos" variante="alert" />
+      <MetricCard
+        valor={Math.max(tramites.length - vencidos - proximos - sinFecha, 0)}
+        etiqueta="En plazo"
+      />
+      <MetricCard valor={sinFecha} etiqueta="Sin fecha probable" />
+      <MetricCard valor={0} etiqueta="Salidas de legal" variante="success" />
+      <MetricCard valor={cargaPonderada} etiqueta="Carga ponderada" />
+    </div>
+  );
+}
+
+function TablaSalidasLegalPorOficial() {
+  return (
+    <div className="tramites-table-wrapper">
+      <table className="tramites-table compact-tramites-table">
+        <thead>
+          <tr>
+            <th>Oficial legal</th>
+            <th>Salidas de legal</th>
+            <th>Observación</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td className="cell-id">No disponible</td>
+            <td>0</td>
+            <td>La API legal viva no entrega salidas/resueltos en el corte actual.</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -1550,6 +2329,21 @@ function formatearNumero(valor?: number): string {
   return valor === undefined || Number.isNaN(valor)
     ? 'No definido'
     : valor.toLocaleString('es-HN');
+}
+
+function formatearFechaNullable(fecha: Date | null): string {
+  return fecha ? fecha.toLocaleDateString('es-HN') : 'No disponible';
+}
+
+function formatearNumeroNullable(valor: number | null): string {
+  return valor === null || Number.isNaN(valor) ? 'No disponible' : valor.toLocaleString('es-HN');
+}
+
+function formatearCondicionLegal(condicion: CondicionLegal): string {
+  if (condicion === 'vencido') return 'Vencido';
+  if (condicion === 'por_vencer') return 'Proximo a vencer';
+  if (condicion === 'sin_fecha_probable') return 'Sin fecha probable';
+  return 'En plazo';
 }
 
 function obtenerNomenclaturaTramite(tramite: TramiteNormalizado): string {
@@ -3658,7 +4452,7 @@ function GraficoVencidosProximos({
                     }
                     aria-label={`Acciones de ${obtenerCodigoTecnico(row.tecnico)}`}
                   >
-                    ⋮
+                    ?
                   </button>
                 )}
               </div>
@@ -3747,7 +4541,7 @@ function ControlTecnico({
       <div className="control-grid">
         <span>Fase actual considerada técnica</span>
         <strong>{control.fasesTecnicas.join(', ')}</strong>
-        <span>Criterio para “pasado a legal”</span>
+        <span>Criterio para pasado a legal</span>
         <strong>{control.criterioPasadoLegal}</strong>
         <span>Total asignados originalmente</span>
         <strong>{control.totalAsignadosOriginalmente}</strong>
@@ -3879,7 +4673,7 @@ function TablaMatrizTecnicos({
                     }}
                     aria-label={`Acciones de ${obtenerCodigoTecnico(row.tecnico)}`}
                   >
-                    ⋮
+                    ?
                   </button>
                 </td>
               )}
@@ -4139,7 +4933,7 @@ function ModalReasignacionIndividual({
             <h3>Reasignar tramite</h3>
           </div>
           <button className="modal-close-button" onClick={onClose} aria-label="Cerrar">
-            ×
+            ?
           </button>
         </div>
 
@@ -4293,7 +5087,7 @@ function ModalReasignacionMasiva({
             <h3>Reasignar seleccionados</h3>
           </div>
           <button className="modal-close-button" onClick={onClose} aria-label="Cerrar">
-            ×
+            ?
           </button>
         </div>
 
@@ -4402,7 +5196,7 @@ function ImpactoRedistribucion({
         <div>
           <span title={responsableActual}>{obtenerCodigoTecnico(responsableActual)}</span>
           <strong>
-            {cargaActualOrigen} → {Math.max(0, cargaActualOrigen - cantidad)}
+            {cargaActualOrigen} {' -> '} {Math.max(0, cargaActualOrigen - cantidad)}
           </strong>
         </div>
       )}
@@ -4410,7 +5204,7 @@ function ImpactoRedistribucion({
         <div>
           <span title={nuevoResponsable}>{obtenerCodigoTecnico(nuevoResponsable)}</span>
           <strong>
-            {cargaActualDestino} → {cargaActualDestino + cantidad}
+            {cargaActualDestino} {' -> '} {cargaActualDestino + cantidad}
           </strong>
         </div>
       )}

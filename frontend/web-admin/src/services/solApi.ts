@@ -10,16 +10,12 @@ import { MOCK_RESPUESTA_TRAMITES } from './mockData';
 type DataSource = 'api' | 'json' | 'mock';
 
 const ENDPOINT_METRICAS_DM = '/api/sol/metricas-dm';
+const JSON_LOCAL_BASE_URL = '/data/api-json';
+const JSON_LOCAL_METRICAS_FILE = 'metricas-ugc.customization';
+const JSON_LOCAL_TRAZABILIDAD_FILE = 'trasabilidad-tramites.customization';
 const TIMEOUT_MS = 250000;
 const DATA_SOURCE = String(import.meta.env.VITE_DATA_SOURCE || 'api').toLowerCase() as DataSource;
 const USE_MOCK_DATA = import.meta.env.VITE_USE_MOCK_DATA === 'true';
-const JSON_LOCAL_MODULES = import.meta.glob<string>(
-  '../data/api-json/*.{json,customization}',
-  {
-    query: '?raw',
-    import: 'default',
-  }
-);
 
 async function fetchConTimeout(
   url: string,
@@ -146,42 +142,33 @@ export async function fetchMetricasDMFromApi(): Promise<ResultadoFetchTramites> 
   }
 }
 
-function resolverArchivoJsonLocal(): [string, () => Promise<string>] {
-  const archivos = Object.entries(JSON_LOCAL_MODULES);
-  if (archivos.length === 0) {
-    throw new Error('No hay archivos JSON en src/data/api-json');
+async function cargarJsonLocal(nombreArchivo: string): Promise<RespuestaSolCruda | undefined> {
+  const url = `${JSON_LOCAL_BASE_URL}/${nombreArchivo}`;
+  const response = await fetchConTimeout(url);
+
+  if (response.status === 404) return undefined;
+  if (!response.ok) {
+    throw new Error(`No se pudo cargar ${url}. Status HTTP ${response.status}`);
   }
 
-  const ordenados = archivos.sort(([a], [b]) => {
-    const aEsMetricas = a.toLowerCase().includes('metricas-ugc') ? -1 : 0;
-    const bEsMetricas = b.toLowerCase().includes('metricas-ugc') ? -1 : 0;
-    if (aEsMetricas !== bEsMetricas) return aEsMetricas - bEsMetricas;
-    return a.localeCompare(b);
-  });
-
-  return ordenados[0];
-}
-
-function resolverArchivoTrazabilidadLocal(): [string, () => Promise<string>] | undefined {
-  return Object.entries(JSON_LOCAL_MODULES).find(([ruta]) =>
-    ruta.toLowerCase().includes('trasabilidad')
-  );
+  return (await response.json()) as RespuestaSolCruda;
 }
 
 export async function fetchMetricasDMFromJson(): Promise<ResultadoFetchTramites> {
   try {
-    const [rutaArchivo, cargarArchivo] = resolverArchivoJsonLocal();
-    const contenido = await cargarArchivo();
-    const data = JSON.parse(contenido) as RespuestaSolCruda;
-    const trazabilidadArchivo = resolverArchivoTrazabilidadLocal();
-    const trazabilidadData = trazabilidadArchivo
-      ? JSON.parse(await trazabilidadArchivo[1]())
-      : undefined;
-    const nombreArchivo = rutaArchivo.split('/').pop() || rutaArchivo;
+    const data = await cargarJsonLocal(JSON_LOCAL_METRICAS_FILE);
+
+    if (!data) {
+      throw new Error(
+        `No existe ${JSON_LOCAL_BASE_URL}/${JSON_LOCAL_METRICAS_FILE}.`
+      );
+    }
+
+    const trazabilidadData = await cargarJsonLocal(JSON_LOCAL_TRAZABILIDAD_FILE);
     const respuestaCruda = {
       source: 'JSON LOCAL',
       sourceKind: 'JSON_LOCAL',
-      fileName: nombreArchivo,
+      fileName: JSON_LOCAL_METRICAS_FILE,
       data,
       trazabilidadData,
     };
@@ -189,10 +176,10 @@ export async function fetchMetricasDMFromJson(): Promise<ResultadoFetchTramites>
     return construirResultadoNormalizado({
       respuestaCruda,
       fuenteDatos: 'JSON LOCAL',
-      urlConsultada: rutaArchivo,
+      urlConsultada: `${JSON_LOCAL_BASE_URL}/${JSON_LOCAL_METRICAS_FILE}`,
       parametroEnviado: 'VITE_DATA_SOURCE=json',
       statusHttp: 200,
-      nombreArchivo,
+      nombreArchivo: JSON_LOCAL_METRICAS_FILE,
     });
   } catch (error) {
     const mensajeError =
@@ -204,7 +191,7 @@ export async function fetchMetricasDMFromJson(): Promise<ResultadoFetchTramites>
       mensajeError: `No se pudo cargar el JSON local. Error: ${mensajeError}`,
       cantidadRegistros: 0,
       totalRegistrosRecibidos: 0,
-      urlConsultada: 'src/data/api-json',
+      urlConsultada: JSON_LOCAL_BASE_URL,
       parametroEnviado: 'VITE_DATA_SOURCE=json',
       fuenteDatos: 'JSON LOCAL',
     };

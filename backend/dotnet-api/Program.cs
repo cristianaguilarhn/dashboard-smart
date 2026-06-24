@@ -125,28 +125,56 @@ app.MapGet("/api/sol/metricas-dm", async (IHttpClientFactory httpClientFactory) 
 })
 .WithName("GetSolMetricasDm");
 
-var summaries = new[]
+app.MapGet("/api/sol/legal-dm", async (IHttpClientFactory httpClientFactory) =>
 {
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
+    const string sourceUrl = "https://solapp.arsa.hn/api/Reportes/dm-tramites-fase-legal?direccion=DM0";
+    var httpClient = httpClientFactory.CreateClient();
+    httpClient.Timeout = TimeSpan.FromSeconds(240);
 
-app.MapGet("/weatherforecast", () =>
-{
-    var forecast =  Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
+    try
+    {
+        using var response = await httpClient.GetAsync(sourceUrl);
+        var content = await response.Content.ReadAsStringAsync();
+
+        JsonElement? data = null;
+        string? parseError = null;
+
+        try
+        {
+            data = JsonSerializer.Deserialize<JsonElement>(content);
+        }
+        catch (JsonException ex)
+        {
+            parseError = ex.Message;
+        }
+
+        return Results.Json(new
+        {
+            sourceUrl,
+            statusHttp = (int)response.StatusCode,
+            ok = response.IsSuccessStatusCode,
+            source = "API SOL",
+            sourceKind = "API_SOL_LEGAL_DM",
+            data,
+            raw = data.HasValue ? null : content,
+            parseError
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new
+        {
+            sourceUrl,
+            statusHttp = 502,
+            ok = false,
+            source = "API SOL",
+            sourceKind = "API_SOL_LEGAL_DM",
+            data = (JsonElement?)null,
+            raw = (string?)null,
+            parseError = ex.Message
+        }, statusCode: 502);
+    }
 })
-.WithName("GetWeatherForecast");
+.WithName("GetSolLegalDm");
 
 app.Run();
-
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}

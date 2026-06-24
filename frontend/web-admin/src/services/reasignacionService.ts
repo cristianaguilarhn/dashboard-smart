@@ -33,7 +33,7 @@ export type ReasignacionResultado = {
 };
 
 const MENSAJE_BACKEND_PENDIENTE =
-  'Funcionalidad preparada. La reasignacion aun no se ejecuta en SOL porque falta conectar el backend seguro.';
+  'No se puede completar la reasignación: falta configurar VITE_DASHBOARD_API_URL con la URL del backend Node seguro.';
 
 function obtenerDashboardApiUrl() {
   return import.meta.env.VITE_DASHBOARD_API_URL?.trim().replace(/\/$/, '');
@@ -47,19 +47,32 @@ async function enviarPost<TPayload>(
 
   if (!baseUrl) {
     return {
-      ok: true,
+      ok: false,
       ejecutadoEnSol: false,
       mensaje: MENSAJE_BACKEND_PENDIENTE,
     };
   }
 
-  const response = await fetch(`${baseUrl}${ruta}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(`${baseUrl}${ruta}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      ejecutadoEnSol: false,
+      mensaje:
+        error instanceof Error
+          ? `No se pudo contactar el backend Node seguro. ${error.message}`
+          : 'No se pudo contactar el backend Node seguro.',
+    };
+  }
 
   if (!response.ok) {
     return {
